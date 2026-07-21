@@ -32,7 +32,7 @@ const features = [
   { icon: TrendingUp, label: "Growth" },
 ];
 
-const trust = ["14-day free trial", "No credit card required", "Demo needs no signup"];
+const trust = ["14-day free trial", "No credit card required"];
 
 export default function Welcome() {
   const { isAuthenticated, loading } = useAuth();
@@ -140,8 +140,8 @@ export default function Welcome() {
             ))}
           </div>
 
-          <p className="mt-8 border-t border-white/[0.08] pt-5 text-[12.5px] leading-relaxed text-white/45">
-            Built for mobile detailers and growing shops · Founding members lock in today's pricing for life
+          <p className="mt-8 border-t border-white/[0.08] pt-5 text-[12.5px] text-white/45">
+            Built for mobile detailers and growing shops.
           </p>
         </motion.div>
       </div>
@@ -157,8 +157,9 @@ export default function Welcome() {
         {/* Seam blend into the text panel — bottom edge on mobile, left edge on desktop. */}
         <div className="absolute inset-0 bg-gradient-to-t from-carbon-950 to-transparent to-40% lg:hidden" />
         <div className="absolute inset-0 hidden lg:block lg:bg-gradient-to-r lg:from-carbon-950 lg:to-transparent lg:to-15%" />
-        {/* Gentle scrim so the glass cards stay legible over a busy photo. */}
-        <div className="absolute inset-0 hidden bg-carbon-950/35 lg:block" />
+        {/* Legibility only where the cards sit — the detailer stays fully lit.
+            A right-edge falloff, not a blanket scrim over the whole photo. */}
+        <div className="absolute inset-y-0 right-0 hidden w-[58%] bg-gradient-to-l from-carbon-950/85 via-carbon-950/45 to-transparent lg:block" />
 
         <PreviewCards />
       </div>
@@ -175,28 +176,23 @@ export default function Welcome() {
 function PreviewCards() {
   const still = useReducedMotion();
 
-  const float = (delay: number) =>
-    still
-      ? {}
-      : {
-          animate: { y: [0, -9, 0] },
-          transition: { duration: 7, repeat: Infinity, ease: "easeInOut" as const, delay },
-        };
-
   return (
-    <div aria-hidden className="pointer-events-none absolute inset-0 hidden lg:block">
-      {/* Today's schedule */}
-      <Floating className="right-6 top-[16%] w-[266px]" delay={0.15} float={float(0)}>
+    <div
+      aria-hidden
+      className="pointer-events-none absolute right-8 top-1/2 hidden w-[290px] -translate-y-1/2 flex-col gap-3.5 lg:flex xl:right-12 xl:w-[310px]"
+    >
+      {/* One aligned column — reads as a single dashboard panel, not scattered
+          bubbles. Depth comes from elevation and blur, never from position. */}
+      <Card index={0} still={still}>
         <CardHead icon={CalendarClock} title="Today's schedule" meta="4 jobs" />
         <div className="mt-3 flex flex-col gap-2.5">
           <Row time="9:00" service="Full Detail" who="Marcus W." tone="success" />
           <Row time="11:30" service="Ceramic Coating" who="Priya S." tone="brand" />
           <Row time="2:00" service="Interior Detail" who="John S." tone="violet" />
         </div>
-      </Floating>
+      </Card>
 
-      {/* Revenue */}
-      <Floating className="right-[22%] top-[47%] w-[228px]" delay={0.3} float={float(1.4)}>
+      <Card index={1} still={still}>
         <CardHead icon={CircleDollarSign} title="Revenue this month" />
         <div className="mt-2 flex items-baseline gap-2">
           <span className="font-display text-[24px] font-bold leading-none tracking-tight text-white">$6,180</span>
@@ -210,14 +206,13 @@ function PreviewCards() {
             <span
               key={i}
               style={{ height: `${h}%` }}
-              className={cn("flex-1 rounded-sm", i === 5 ? "bg-brand-400" : "bg-white/25")}
+              className={cn("flex-1 rounded-sm", i === 5 ? "bg-brand-400" : "bg-white/22")}
             />
           ))}
         </div>
-      </Floating>
+      </Card>
 
-      {/* Invoice paid */}
-      <Floating className="right-10 bottom-[14%] w-[250px]" delay={0.45} float={float(2.6)}>
+      <Card index={2} still={still}>
         <div className="flex items-center gap-2.5">
           <span className="flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-success/20 text-success">
             <ReceiptText className="h-4 w-4" />
@@ -230,32 +225,50 @@ function PreviewCards() {
             Paid
           </span>
         </div>
-      </Floating>
+      </Card>
     </div>
   );
 }
 
-function Floating({
-  className, delay, float, children,
-}: {
-  className?: string;
-  delay: number;
-  float: Record<string, unknown>;
-  children: React.ReactNode;
+/**
+ * A single preview card. Motion is deliberately restrained: a crisp entrance,
+ * then an almost-imperceptible 22s breathe (3px of travel + a 0.4% scale) that
+ * reads as "alive" rather than "floating". Reduced-motion users get it static.
+ */
+function Card({ index, still, children }: {
+  index: number; still: boolean | null; children: React.ReactNode;
 }) {
+  const breathe = still
+    ? {}
+    : {
+        animate: { y: [0, -3, 0], scale: [1, 1.004, 1], opacity: [1, 0.97, 1] },
+        transition: {
+          duration: 22,
+          repeat: Infinity,
+          ease: "easeInOut" as const,
+          delay: index * 2.6,
+        },
+      };
+
   return (
     <motion.div
-      initial={{ opacity: 0, y: 18, scale: 0.97 }}
+      initial={{ opacity: 0, y: 12, scale: 0.985 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.55, delay, ease: [0.22, 1, 0.36, 1] }}
-      className={cn("absolute", className)}
+      transition={{ duration: 0.6, delay: 0.2 + index * 0.11, ease: [0.22, 1, 0.36, 1] }}
     >
       <motion.div
-        {...float}
-        className="glass rounded-2xl border border-white/[0.14] p-3.5 shadow-[0_18px_50px_-18px_rgba(0,0,0,0.8)]"
+        {...breathe}
+        className={cn(
+          "relative overflow-hidden rounded-2xl p-3.5",
+          // deeper frosting so the card sits *in* the photo, not on top of it
+          "border border-white/[0.13] bg-carbon-950/55 backdrop-blur-2xl backdrop-saturate-150",
+          // layered elevation: tight contact shadow + wide ambient falloff
+          "shadow-[0_1px_2px_rgba(0,0,0,0.45),0_10px_24px_-10px_rgba(0,0,0,0.7),0_36px_72px_-28px_rgba(0,0,0,0.85)]"
+        )}
       >
-        {/* top-edge gloss, matching the app's surfaces */}
-        <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-1/3 rounded-t-2xl bg-gradient-to-b from-white/[0.10] to-transparent" />
+        {/* hairline top highlight — the same gloss language as the app surfaces */}
+        <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
+        <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-1/3 bg-gradient-to-b from-white/[0.07] to-transparent" />
         <div className="relative">{children}</div>
       </motion.div>
     </motion.div>
