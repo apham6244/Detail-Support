@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 import type { Appointment, AppointmentStatus } from "@/lib/models";
+import { isDemo, demoGuard, DEMO_APPOINTMENTS } from "@/lib/demo";
 
 export type AppointmentInput = {
   customer_id: string;
@@ -24,10 +25,11 @@ const mapAppt = (a: any): Appointment => ({
 
 export function useAppointments() {
   const { org } = useAuth();
-  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [appointments, setAppointments] = useState<Appointment[]>(isDemo() ? DEMO_APPOINTMENTS : []);
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
+    if (isDemo()) return; // demo never touches the database
     if (!supabase || !org) {
       setAppointments([]);
       return;
@@ -46,6 +48,7 @@ export function useAppointments() {
   }, [load]);
 
   const create = async (input: AppointmentInput) => {
+    demoGuard();
     if (!supabase || !org) throw new Error("Sign in to book appointments.");
     const { data, error } = await supabase
       .from("appointments")
@@ -59,6 +62,7 @@ export function useAppointments() {
 
   /** Edit any field of a booked job (date/time, service, price, notes…). */
   const update = async (id: string, patch: Partial<AppointmentInput>) => {
+    demoGuard();
     if (!supabase) throw new Error("Not available.");
     const { data, error } = await supabase
       .from("appointments")
@@ -72,6 +76,7 @@ export function useAppointments() {
   };
 
   const setStatus = async (id: string, status: AppointmentStatus) => {
+    demoGuard();
     if (!supabase) throw new Error("Not available.");
     const { data, error } = await supabase
       .from("appointments")
@@ -84,6 +89,7 @@ export function useAppointments() {
   };
 
   const remove = async (id: string) => {
+    demoGuard();
     if (!supabase) throw new Error("Not available.");
     const { error } = await supabase.from("appointments").delete().eq("id", id);
     if (error) throw new Error(error.message);
@@ -92,6 +98,7 @@ export function useAppointments() {
 
   /** Assign / reassign a job (owner/admin) via the RPC; null unassigns. */
   const assign = async (id: string, userId: string | null) => {
+    demoGuard();
     if (!supabase) throw new Error("Not available.");
     const { error } = await supabase.rpc("assign_appointment", { p_appt: id, p_user: userId });
     if (error) throw new Error(error.message);

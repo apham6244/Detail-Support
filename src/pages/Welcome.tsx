@@ -9,6 +9,8 @@ import {
   TrendingUp,
   Sun,
   Moon,
+  Eye,
+  ArrowRight,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
@@ -85,12 +87,26 @@ export default function Welcome() {
               Create account
             </Link>
             <Link
+              to="/demo"
+              className="group glass relative inline-flex h-12 w-full items-center justify-center gap-2 overflow-hidden rounded-xl px-7 text-[15px] font-semibold text-white ring-1 ring-inset ring-white/20 transition-[transform,background-color,box-shadow] duration-150 hover:bg-white/[0.18] hover:ring-white/30 active:scale-[0.98] sm:w-auto"
+            >
+              {/* top-edge sheen — the same gloss language as the rest of the app */}
+              <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/12 to-transparent" />
+              <Eye className="relative h-[18px] w-[18px]" />
+              <span className="relative">Explore Demo</span>
+              <ArrowRight className="relative h-4 w-4 transition-transform duration-150 group-hover:translate-x-0.5" />
+            </Link>
+            <Link
               to="/login"
-              className="glass inline-flex h-12 w-full items-center justify-center rounded-xl px-7 text-[15px] font-semibold text-white transition hover:bg-white/[0.16] sm:w-auto"
+              className="inline-flex h-12 w-full items-center justify-center rounded-xl px-7 text-[15px] font-semibold text-white/80 transition hover:text-white sm:w-auto"
             >
               Log in
             </Link>
           </div>
+
+          <p className="mt-3.5 text-[13px] text-white/50">
+            Explore the app before creating your account
+          </p>
 
           <div className="mt-10 flex flex-wrap gap-2.5">
             {features.map(({ icon: Icon, label }) => (

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 import type { Service } from "@/lib/models";
+import { isDemo, demoGuard, DEMO_SERVICES } from "@/lib/demo";
 
 export type ServiceInput = {
   name: string;
@@ -16,10 +17,11 @@ const mapService = (s: any): Service => ({ ...s, price: Number(s.price ?? 0) });
 
 export function useServices() {
   const { org } = useAuth();
-  const [services, setServices] = useState<Service[]>([]);
+  const [services, setServices] = useState<Service[]>(isDemo() ? DEMO_SERVICES : []);
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
+    if (isDemo()) return; // demo never touches the database
     if (!supabase || !org) {
       setServices([]);
       return;
@@ -38,6 +40,7 @@ export function useServices() {
   }, [load]);
 
   const create = async (input: ServiceInput) => {
+    demoGuard();
     if (!supabase || !org) throw new Error("Sign in to add services.");
     const { data, error } = await supabase
       .from("services")
@@ -51,6 +54,7 @@ export function useServices() {
   };
 
   const update = async (id: string, patch: Partial<ServiceInput>) => {
+    demoGuard();
     if (!supabase) throw new Error("Not available.");
     const { data, error } = await supabase
       .from("services")
@@ -64,6 +68,7 @@ export function useServices() {
   };
 
   const remove = async (id: string) => {
+    demoGuard();
     if (!supabase) throw new Error("Not available.");
     const { error } = await supabase.from("services").delete().eq("id", id);
     if (error) throw new Error(error.message);

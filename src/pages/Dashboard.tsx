@@ -18,6 +18,10 @@ import {
   FileText,
   TrendingUp,
   TrendingDown,
+  AlertCircle,
+  Send,
+  Clock,
+  BellRing,
   type LucideIcon,
 } from "lucide-react";
 import { SignInPrompt, money } from "@/components/ui/data";
@@ -148,6 +152,37 @@ export default function Dashboard() {
     const totalAppts = appointments.length;
     const completionRate = totalAppts ? Math.round((completedAll / totalAppts) * 100) : 0;
 
+    // --- Needs attention: things that cost money if ignored ---
+    const nowMs = Date.now();
+    const balanceOf = (inv: (typeof invoices)[number]) =>
+      Math.max(0, inv.total - (inv.status === "paid" ? inv.total : inv.status === "deposit_paid" ? inv.deposit_amount : 0));
+    let overdueCount = 0;
+    let overdueAmount = 0;
+    let unsentCount = 0;
+    for (const inv of invoices) {
+      const bal = balanceOf(inv);
+      if (bal <= 0.005) continue;
+      if (inv.due_at && new Date(inv.due_at).getTime() < nowMs) {
+        overdueCount += 1;
+        overdueAmount += bal;
+      }
+      if (!inv.sent_at) unsentCount += 1;
+    }
+
+    // Customers served before, nothing booked, quiet for 60+ days.
+    const lastDone: Record<string, number> = {};
+    const hasUpcoming = new Set<string>();
+    for (const a of appointments) {
+      const t = new Date(a.scheduled_at).getTime();
+      if (a.status === "completed") lastDone[a.customer_id] = Math.max(lastDone[a.customer_id] ?? 0, t);
+      if ((a.status === "scheduled" || a.status === "confirmed") && t >= nowMs) hasUpcoming.add(a.customer_id);
+    }
+    const lapsedCount = Object.entries(lastDone)
+      .filter(([id, t]) => !hasUpcoming.has(id) && nowMs - t > 60 * 86_400_000).length;
+
+    // Today's jobs still sitting unconfirmed.
+    const unconfirmedToday = todays.filter((a) => a.status === "scheduled").length;
+
     return {
       todays,
       upcomingToday,
@@ -165,6 +200,11 @@ export default function Dashboard() {
       completedAll,
       totalAppts,
       completionRate,
+      overdueCount,
+      overdueAmount,
+      unsentCount,
+      lapsedCount,
+      unconfirmedToday,
     };
   }, [appointments, invoices, customers]);
 
@@ -236,6 +276,16 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Needs attention — only appears when something actually needs doing */}
+      <NeedsAttention
+        overdueCount={m.overdueCount}
+        overdueAmount={m.overdueAmount}
+        unsentCount={m.unsentCount}
+        lapsedCount={m.lapsedCount}
+        unconfirmedToday={m.unconfirmedToday}
+        showMoney={showRevenue}
+      />
 
       {/* This month — engaging animated stat cards */}
       {showStats && (
@@ -695,5 +745,108 @@ function GrowthCard({
     </Link>
   ) : (
     <div className={cn(cls, soon && "opacity-95")}>{inner}</div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Needs attention — the one thing the dashboard was missing: what to DO today.
+// Every item is derived from real data and only renders when it applies, so a
+// healthy shop sees a calm "all clear" instead of a wall of empty warnings.
+// ---------------------------------------------------------------------------
+
+function NeedsAttention({
+  overdueCount, overdueAmount, unsentCount, lapsedCount, unconfirmedToday, showMoney,
+}: {
+  overdueCount: number; overdueAmount: number; unsentCount: number;
+  lapsedCount: number; unconfirmedToday: number; showMoney: boolean;
+}) {
+  const items: {
+    tone: "danger" | "warning" | "brand" | "violet";
+    icon: LucideIcon; title: string; detail: string; to: string; cta: string;
+  }[] = [];
+
+  if (showMoney && overdueCount > 0) {
+    items.push({
+      tone: "danger", icon: AlertCircle,
+      title: `${overdueCount} overdue invoice${overdueCount === 1 ? "" : "s"}`,
+      detail: `${money(overdueAmount)} past due`,
+      to: "/invoices", cta: "Chase payment",
+    });
+  }
+  if (unconfirmedToday > 0) {
+    items.push({
+      tone: "warning", icon: Clock,
+      title: `${unconfirmedToday} job${unconfirmedToday === 1 ? "" : "s"} unconfirmed`,
+      detail: "On today's board", to: "/appointments", cta: "Confirm",
+    });
+  }
+  if (showMoney && unsentCount > 0) {
+    items.push({
+      tone: "brand", icon: Send,
+      title: `${unsentCount} invoice${unsentCount === 1 ? "" : "s"} not sent`,
+      detail: "Customer hasn't been billed", to: "/invoices", cta: "Send",
+    });
+  }
+  if (lapsedCount > 0) {
+    items.push({
+      tone: "violet", icon: BellRing,
+      title: `${lapsedCount} client${lapsedCount === 1 ? "" : "s"} gone quiet`,
+      detail: "No visit in 60+ days", to: "/customers", cta: "Win them back",
+    });
+  }
+
+  if (items.length === 0) return null;
+
+  const TONE = {
+    danger:  { bubble: "bg-danger/12 text-danger",       ring: "ring-danger/20" },
+    warning: { bubble: "bg-warning/12 text-warning",     ring: "ring-warning/20" },
+    brand:   { bubble: "bg-brand-500/12 text-brand-500", ring: "ring-brand-500/20" },
+    violet:  { bubble: "bg-violet/12 text-violet",       ring: "ring-violet/20" },
+  } as const;
+
+  return (
+    <div className="mt-5">
+      <div className="mb-2.5 flex items-center gap-2">
+        <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-warning/12 text-warning">
+          <BellRing className="h-3.5 w-3.5" />
+        </span>
+        <h2 className="font-display text-[15px] font-bold tracking-tight text-ink">Needs attention</h2>
+        <span className="text-[12px] text-ink3">· {items.length}</span>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {items.map((it, i) => {
+          const t = TONE[it.tone];
+          return (
+            <motion.div
+              key={it.title}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.32, delay: i * 0.05, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <Link
+                to={it.to}
+                className={cn(
+                  "surface group flex h-full items-start gap-3 rounded-2xl p-3.5 ring-1 ring-inset transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-lift",
+                  t.ring
+                )}
+              >
+                <span className={cn("flex h-9 w-9 flex-none items-center justify-center rounded-xl transition-transform duration-200 group-hover:scale-105", t.bubble)}>
+                  <it.icon className="h-[18px] w-[18px]" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13.5px] font-semibold text-ink">{it.title}</span>
+                  <span className="mt-0.5 block truncate text-[11.5px] text-ink3">{it.detail}</span>
+                  <span className="mt-1.5 inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand-500">
+                    {it.cta}
+                    <ArrowRight className="h-3 w-3 transition-transform duration-200 group-hover:translate-x-0.5" />
+                  </span>
+                </span>
+              </Link>
+            </motion.div>
+          );
+        })}
+      </div>
+    </div>
   );
 }

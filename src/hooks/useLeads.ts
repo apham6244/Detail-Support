@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 import { LEAD_STATUS_LABEL, type Lead, type LeadActivity, type LeadStatus } from "@/lib/models";
+import { isDemo, demoGuard, DEMO_LEADS } from "@/lib/demo";
 
 export type LeadInput = {
   name: string;
@@ -23,10 +24,11 @@ const mapLead = (l: any): Lead => ({
 
 export function useLeads() {
   const { org } = useAuth();
-  const [leads, setLeads] = useState<Lead[]>([]);
+  const [leads, setLeads] = useState<Lead[]>(isDemo() ? DEMO_LEADS : []);
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
+    if (isDemo()) return; // demo never touches the database
     if (!supabase || !org) {
       setLeads([]);
       return;
@@ -51,6 +53,7 @@ export function useLeads() {
   };
 
   const create = async (input: LeadInput) => {
+    demoGuard();
     if (!supabase || !org) throw new Error("Sign in to add leads.");
     const { data, error } = await supabase
       .from("leads")
@@ -65,6 +68,7 @@ export function useLeads() {
   };
 
   const update = async (id: string, patch: Partial<LeadInput>) => {
+    demoGuard();
     if (!supabase) throw new Error("Not available.");
     const { data, error } = await supabase
       .from("leads")
@@ -78,6 +82,7 @@ export function useLeads() {
   };
 
   const setStatus = async (id: string, status: LeadStatus) => {
+    demoGuard();
     const prev = leads.find((l) => l.id === id)?.status;
     const patch: Partial<LeadInput> = { status };
     if (status === "contacted") patch.last_contacted_at = new Date().toISOString();
@@ -89,12 +94,14 @@ export function useLeads() {
   };
 
   const markContacted = async (id: string) => {
+    demoGuard();
     const res = await update(id, { last_contacted_at: new Date().toISOString() });
     await logActivity(id, "contacted", "Marked as contacted");
     return res;
   };
 
   const remove = async (id: string) => {
+    demoGuard();
     if (!supabase) throw new Error("Not available.");
     const { error } = await supabase.from("leads").delete().eq("id", id);
     if (error) throw new Error(error.message);
@@ -107,6 +114,7 @@ export function useLeads() {
    * Returns the new customer id.
    */
   const convertToCustomer = async (lead: Lead) => {
+    demoGuard();
     if (!supabase || !org) throw new Error("Not available.");
     const notesBits = [
       lead.vehicle ? `Vehicle: ${lead.vehicle}` : null,
@@ -145,6 +153,7 @@ export function useLeadActivities(leadId: string | null) {
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
+    if (isDemo()) return; // demo never touches the database
     if (!supabase || !org || !leadId) {
       setActivities([]);
       return;
@@ -164,6 +173,7 @@ export function useLeadActivities(leadId: string | null) {
   }, [load]);
 
   const addNote = async (body: string) => {
+    demoGuard();
     if (!supabase || !org || !leadId) throw new Error("Not available.");
     const { data, error } = await supabase
       .from("lead_activities")

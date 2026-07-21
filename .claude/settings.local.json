@@ -99,7 +99,11 @@
       "Bash(sed -i '0,/    if \\(!supabase || !org\\) {/s||    if \\(PREVIEW\\) return; // TEMP\\\\n    if \\(!supabase || !org\\) {|' useCustomers.ts)",
       "Bash(sed -i 's|^import type { Appointment, AppointmentStatus } from \"@/lib/models\";|import type { Appointment, AppointmentStatus } from \"@/lib/models\";\\\\nimport { PREVIEW, MOCK_APPOINTMENTS } from \"@/lib/__preview\"; // TEMP|' useAppointments.ts)",
       "Bash(sed -i 's|  const \\\\[appointments, setAppointments\\\\] = useState<Appointment\\\\[\\\\]>\\(\\\\[\\\\]\\);|  const [appointments, setAppointments] = useState<Appointment[]>\\(PREVIEW ? MOCK_APPOINTMENTS : []\\);|' useAppointments.ts)",
-      "PowerShell($env:PATH = [System.Environment]::GetEnvironmentVariable\\(\"PATH\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"PATH\",\"User\"\\); Set-Location \"C:\\\\Users\\\\Andy\\\\Documents\\\\Amei-Outreach-App\"; npx vite build 2>&1 | Select-String -Pattern \"built in|error\" | Select-Object -First 4)"
+      "PowerShell($env:PATH = [System.Environment]::GetEnvironmentVariable\\(\"PATH\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"PATH\",\"User\"\\); Set-Location \"C:\\\\Users\\\\Andy\\\\Documents\\\\Amei-Outreach-App\"; npx vite build 2>&1 | Select-String -Pattern \"built in|error\" | Select-Object -First 4)",
+      "PowerShell($env:PATH = [System.Environment]::GetEnvironmentVariable\\(\"PATH\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"PATH\",\"User\"\\); Set-Location \"C:\\\\Users\\\\Andy\\\\Documents\\\\Amei-Outreach-App\"; npx tsc --noEmit 2>&1 | Select-Object -First 20; if \\($?\\) { \"TSC OK\" })",
+      "Bash(python -)",
+      "PowerShell($env:PATH = [System.Environment]::GetEnvironmentVariable\\(\"PATH\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"PATH\",\"User\"\\); Set-Location \"C:\\\\Users\\\\Andy\\\\Documents\\\\Amei-Outreach-App\"; npx tsc --noEmit 2>&1 | Select-Object -First 15; if \\($?\\) { \"TSC OK\" })",
+      "PowerShell($env:PATH = [System.Environment]::GetEnvironmentVariable\\(\"PATH\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"PATH\",\"User\"\\); Set-Location \"C:\\\\Users\\\\Andy\\\\Documents\\\\Amei-Outreach-App\"; npx vite build 2>&1 | Select-String -Pattern \"built in|error\" | Select-Object -First 3)"
     ]
   }
 }

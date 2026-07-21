@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 import type { Customer } from "@/lib/models";
+import { isDemo, demoGuard, DEMO_CUSTOMERS } from "@/lib/demo";
 
 export type CustomerInput = {
   name: string;
@@ -13,10 +14,11 @@ export type CustomerInput = {
 
 export function useCustomers() {
   const { org } = useAuth();
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>(isDemo() ? DEMO_CUSTOMERS : []);
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
+    if (isDemo()) return; // demo never touches the database
     if (!supabase || !org) {
       setCustomers([]);
       return;
@@ -35,6 +37,7 @@ export function useCustomers() {
   }, [load]);
 
   const create = async (input: CustomerInput) => {
+    demoGuard();
     if (!supabase || !org) throw new Error("Sign in to add customers.");
     const { data, error } = await supabase
       .from("customers")
@@ -47,6 +50,7 @@ export function useCustomers() {
   };
 
   const update = async (id: string, patch: Partial<CustomerInput>) => {
+    demoGuard();
     if (!supabase) throw new Error("Not available.");
     const { data, error } = await supabase
       .from("customers")
@@ -60,6 +64,7 @@ export function useCustomers() {
   };
 
   const remove = async (id: string) => {
+    demoGuard();
     if (!supabase) throw new Error("Not available.");
     const { error } = await supabase.from("customers").delete().eq("id", id);
     if (error) throw new Error(error.message);

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { isDemo, demoGuard, DEMO_REVIEWS_PAYLOAD, DEMO_REVIEW_CONNECTION } from "@/lib/demo";
 
 /**
  * Google reviews, read straight from the user's Google Business Profile via the
@@ -48,14 +49,16 @@ export interface ReviewsPayload {
 }
 
 export function useGoogleReviews() {
-  const [configured, setConfigured] = useState<boolean | null>(null);
-  const [connected, setConnected] = useState<Connection | null>(null);
-  const [data, setData] = useState<ReviewsPayload | null>(null);
+  const demo = isDemo();
+  const [configured, setConfigured] = useState<boolean | null>(demo ? true : null);
+  const [connected, setConnected] = useState<Connection | null>(demo ? (DEMO_REVIEW_CONNECTION as Connection) : null);
+  const [data, setData] = useState<ReviewsPayload | null>(demo ? (DEMO_REVIEWS_PAYLOAD as unknown as ReviewsPayload) : null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Initial status: is Google configured, and has this org connected a place?
   useEffect(() => {
+    if (isDemo()) return; // demo never calls the server
     let alive = true;
     api<{ configured: boolean; connected: Connection | null }>("/reviews/status")
       .then((s) => {
@@ -70,6 +73,7 @@ export function useGoogleReviews() {
   }, []);
 
   const refresh = useCallback(async () => {
+    if (isDemo()) return;
     setLoading(true);
     setError(null);
     try {
@@ -113,6 +117,7 @@ export function useGoogleReviews() {
   }, []);
 
   const disconnect = useCallback(async () => {
+    demoGuard();
     await api("/reviews/disconnect", { method: "POST" });
     setConnected(null);
     setData(null);

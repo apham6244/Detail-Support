@@ -18,6 +18,7 @@ import {
   Lock,
   Star,
   Target,
+  CreditCard,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -38,37 +39,49 @@ interface NavGroup {
   items: NavItem[];
 }
 
-// Same items and order as before — just grouped so the rail reads as sections,
-// not one long list. No items added or removed.
+// Grouped by what a detailer is actually trying to do, so the rail reads as
+// four short sections instead of one long list:
+//   Main     — the daily loop: check the day, find a client, look at the book
+//   Business — money & the work that earns it, in funnel order
+//   Growth   — the things you look at weekly, not hourly
+//   Tools    — set-up and admin you touch rarely
+// Every previous item is still here (nothing removed) and Billing — which had
+// a live /billing route but no nav entry — is now reachable.
 const navGroups: NavGroup[] = [
   {
-    items: [{ to: "/", label: "Dashboard", icon: LayoutDashboard }],
-  },
-  {
-    heading: "Clients",
+    heading: "Main",
     items: [
-      { to: "/leads", label: "Leads", icon: Target },
+      { to: "/", label: "Dashboard", icon: LayoutDashboard },
       { to: "/customers", label: "Customers", icon: Users },
       { to: "/appointments", label: "Appointments", icon: CalendarClock },
       { to: "/schedule", label: "Schedule", icon: CalendarDays, feature: "team_scheduling" },
     ],
   },
   {
-    heading: "Sales",
+    heading: "Business",
     items: [
+      { to: "/leads", label: "Leads", icon: Target },
+      { to: "/reviews", label: "Reviews", icon: Star },
       { to: "/quotes", label: "Quotes", icon: ClipboardList, feature: "quotes" },
       { to: "/invoices", label: "Invoices", icon: FileText, feature: "invoices" },
       { to: "/services", label: "Services", icon: Wrench },
     ],
   },
   {
-    heading: "Grow",
+    heading: "Growth",
     items: [
-      { to: "/reviews", label: "Reviews", icon: Star },
-      { to: "/analytics", label: "Analytics", icon: BarChart3, feature: "analytics" },
       { to: "/marketing", label: "Marketing", icon: Megaphone, feature: "marketing" },
+      { to: "/analytics", label: "Analytics", icon: BarChart3, feature: "analytics" },
       { to: "/performance", label: "Performance", icon: Gauge, feature: "performance_tracking" },
+    ],
+  },
+  {
+    heading: "Tools",
+    items: [
       { to: "/gear-guide", label: "Gear Guide", icon: ShoppingBag },
+      { to: "/team", label: "Team", icon: UsersRound, feature: "team_members" },
+      { to: "/billing", label: "Billing", icon: CreditCard },
+      { to: "/settings", label: "Settings", icon: Settings },
       // Shop is TEMPORARILY HIDDEN from navigation (product-strategy decision:
       // focus the core detailing tools first). Nothing is removed — the /shop*
       // routes stay registered in App.tsx and all Shop code is intact
@@ -76,13 +89,6 @@ const navGroups: NavGroup[] = [
       // image system). To re-enable, restore the line below (and re-import the
       // `Store` icon from lucide-react above). Planned as a future marketplace.
       // { to: "/shop", label: "Shop", icon: Store },
-    ],
-  },
-  {
-    heading: "Manage",
-    items: [
-      { to: "/team", label: "Team", icon: UsersRound, feature: "team_members" },
-      { to: "/settings", label: "Settings", icon: Settings },
     ],
   },
 ];

@@ -9,6 +9,7 @@ import {
 } from "react";
 import { supabase } from "./supabase";
 import { useAuth } from "./auth";
+import { isDemo } from "./demo";
 import type { BillingPlan, BillingStatus } from "./models";
 
 export interface PlanFeature {
@@ -77,7 +78,8 @@ export function EntitlementsProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
-    if (!supabase || !org) {
+    // Demo never queries the database — hasFeature() already returns true.
+    if (isDemo() || !supabase || !org) {
       setLoading(false);
       return;
     }
@@ -167,7 +169,9 @@ export function EntitlementsProvider({ children }: { children: ReactNode }) {
       seatLimit,
       customersUsed,
       customerLimit,
-      hasFeature: (key) => Boolean(eff?.featureKeys.has(key)),
+      // In demo every feature is unlocked so a visitor sees the whole product
+      // rather than a wall of upgrade prompts. Real orgs are unaffected.
+      hasFeature: (key) => (isDemo() ? true : Boolean(eff?.featureKeys.has(key))),
       planForFeature: (key) => catalog.find((c) => c.featureKeys.has(key)),
       changePlan,
       reload: load,

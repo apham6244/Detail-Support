@@ -1,8 +1,9 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
-import { Loader2 } from "lucide-react";
 import { AppLayout } from "./components/layout/AppLayout";
+import { DSIcon } from "./components/brand/Logo";
 import { useAuth } from "./lib/auth";
+import { isDemo, startDemo } from "./lib/demo";
 
 // Public
 const Welcome = lazy(() => import("./pages/Welcome"));
@@ -33,19 +34,53 @@ const ShopBrowse = lazy(() => import("./pages/shop/ShopBrowse"));
 const ShopBrand = lazy(() => import("./pages/shop/ShopBrand"));
 const ShopProduct = lazy(() => import("./pages/shop/ShopProduct"));
 
+/**
+ * Branded boot screen. This is the first thing anyone sees, so it carries the
+ * mark rather than a generic spinner: a softly pulsing brand halo behind the
+ * logo and a slim indeterminate sweep. Reduced-motion users get it static.
+ */
 function Splash() {
   return (
-    <div className="flex h-screen items-center justify-center bg-ground">
-      <Loader2 className="h-6 w-6 animate-spin text-ink3" />
+    <div className="relative flex h-[100dvh] flex-col items-center justify-center overflow-hidden bg-ground">
+      <div aria-hidden className="pointer-events-none absolute left-1/2 top-1/2 h-[420px] w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-brand-500/10 blur-[110px]" />
+      <div className="relative flex flex-col items-center">
+        <div className="relative">
+          <span aria-hidden className="absolute -inset-3 rounded-[22px] bg-brand-500/25 blur-xl motion-safe:animate-pulse" />
+          <DSIcon size={54} className="relative" />
+        </div>
+        <div className="mt-4 font-display text-[16px] font-bold tracking-tight text-ink">Detail Support</div>
+        <div className="mt-1 text-[12.5px] text-ink3">Getting your shop ready…</div>
+        <div className="mt-5 h-[3px] w-40 overflow-hidden rounded-full bg-line2">
+          <div className="h-full w-1/3 rounded-full bg-gradient-to-r from-brand-400 to-brand-600 motion-safe:animate-[splash-sweep_1.15s_ease-in-out_infinite]" />
+        </div>
+      </div>
+      <style>{`@keyframes splash-sweep{0%{transform:translateX(-110%)}100%{transform:translateX(320%)}}`}</style>
     </div>
   );
 }
 
-/** Gate the app shell: splash while loading, redirect to welcome if logged out. */
+/**
+ * /demo — a shareable, bookmarkable entry point to the sample workspace.
+ * Turns demo mode on, then hands off with a REAL page load so every provider
+ * re-initialises (AuthProvider sits above the router and reads isDemo() during
+ * render, so a client-side navigate would leave it stale — see lib/demo.ts).
+ */
+function DemoEntry() {
+  useEffect(() => {
+    startDemo();
+  }, []);
+  return <Splash />;
+}
+
+/**
+ * Gate the app shell: splash while loading, redirect to welcome if logged out.
+ * Demo visitors are admitted too — `useAuth` supplies a synthetic read-only
+ * identity in that case (and only when there's no real session).
+ */
 function RequireAuth() {
   const { loading, isAuthenticated } = useAuth();
   if (loading) return <Splash />;
-  if (!isAuthenticated) return <Navigate to="/welcome" replace />;
+  if (!isAuthenticated && !isDemo()) return <Navigate to="/welcome" replace />;
   return <AppLayout />;
 }
 
@@ -58,6 +93,7 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<SignUp />} />
         <Route path="/accept-invite" element={<AcceptInvite />} />
+        <Route path="/demo" element={<DemoEntry />} />
 
         {/* Protected app */}
         <Route element={<RequireAuth />}>

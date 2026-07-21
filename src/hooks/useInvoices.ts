@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 import type { Invoice, InvoiceLineItem, InvoiceStatus } from "@/lib/models";
+import { isDemo, demoGuard, DEMO_INVOICES } from "@/lib/demo";
 
 export type NewInvoice = {
   customer_id: string;
@@ -21,10 +22,11 @@ const mapInvoice = (i: any): Invoice => ({
 
 export function useInvoices() {
   const { org } = useAuth();
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>(isDemo() ? DEMO_INVOICES : []);
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
+    if (isDemo()) return; // demo never touches the database
     if (!supabase || !org) {
       setInvoices([]);
       return;
@@ -43,6 +45,7 @@ export function useInvoices() {
   }, [load]);
 
   const create = async (input: NewInvoice) => {
+    demoGuard();
     if (!supabase || !org) throw new Error("Sign in to create invoices.");
 
     const lines = input.lines
@@ -96,6 +99,7 @@ export function useInvoices() {
   };
 
   const setStatus = async (id: string, status: InvoiceStatus) => {
+    demoGuard();
     if (!supabase) throw new Error("Not available.");
     const { data, error } = await supabase
       .from("invoices")
@@ -108,6 +112,7 @@ export function useInvoices() {
   };
 
   const markSent = async (id: string) => {
+    demoGuard();
     if (!supabase) throw new Error("Not available.");
     const { data, error } = await supabase
       .from("invoices")
@@ -136,6 +141,7 @@ export function useInvoices() {
   };
 
   const remove = async (id: string) => {
+    demoGuard();
     if (!supabase) throw new Error("Not available.");
     const { error } = await supabase.from("invoices").delete().eq("id", id);
     if (error) throw new Error(error.message);

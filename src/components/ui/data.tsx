@@ -49,10 +49,21 @@ export function IconBtn({
   );
 }
 
-export function Loading() {
+/**
+ * In-page loader. A brand-tinted ring rather than a grey spinner — the delayed
+ * fade means quick loads never flash it at all.
+ */
+export function Loading({ label = "Loading" }: { label?: string }) {
   return (
-    <div className="animate-fade flex h-[40vh] items-center justify-center [animation-delay:120ms]">
-      <Loader2 className="h-6 w-6 animate-spin text-ink3" />
+    <div className="animate-fade flex h-[40vh] flex-col items-center justify-center gap-3 [animation-delay:120ms]">
+      <span className="relative flex h-10 w-10 items-center justify-center">
+        {/* soft brand halo */}
+        <span aria-hidden className="absolute inset-0 rounded-full bg-brand-500/15 blur-md motion-safe:animate-pulse" />
+        {/* track + sweeping arc */}
+        <span aria-hidden className="absolute inset-0 rounded-full border-2 border-line2" />
+        <Loader2 className="relative h-[26px] w-[26px] animate-spin text-brand-500" strokeWidth={2.4} />
+      </span>
+      <span className="text-[12.5px] font-medium text-ink3">{label}…</span>
     </div>
   );
 }

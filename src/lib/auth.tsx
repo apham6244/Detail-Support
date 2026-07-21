@@ -8,6 +8,7 @@ import {
 import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigured } from "./supabase";
 import { setToken } from "./api";
+import { isDemo, DEMO_ORG, DEMO_USER, DEMO_PROFILE, DEMO_ROLE } from "./demo";
 
 interface AuthUser {
   id: string;
@@ -202,16 +203,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(null);
   };
 
+  // Demo overlay — a synthetic, read-only identity so a visitor can explore the
+  // app without an account. It applies ONLY when there is no real session, so a
+  // signed-in user can never be shadowed by it. Nothing below is persisted and
+  // no token is set, so demo can't authenticate against Supabase or the API.
+  const demo = isDemo() && !user;
+
   return (
     <AuthContext.Provider
       value={{
-        user,
-        profile,
-        org,
-        role,
-        isAuthenticated: Boolean(user),
+        user: demo ? DEMO_USER : user,
+        profile: demo ? DEMO_PROFILE : profile,
+        org: demo ? DEMO_ORG : org,
+        role: demo ? DEMO_ROLE : role,
+        isAuthenticated: demo ? true : Boolean(user),
         configured: supabaseConfigured,
-        loading,
+        loading: demo ? false : loading,
         login,
         register,
         logout,
