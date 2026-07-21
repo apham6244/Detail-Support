@@ -104,7 +104,8 @@
       "Bash(python -)",
       "PowerShell($env:PATH = [System.Environment]::GetEnvironmentVariable\\(\"PATH\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"PATH\",\"User\"\\); Set-Location \"C:\\\\Users\\\\Andy\\\\Documents\\\\Amei-Outreach-App\"; npx tsc --noEmit 2>&1 | Select-Object -First 15; if \\($?\\) { \"TSC OK\" })",
       "PowerShell($env:PATH = [System.Environment]::GetEnvironmentVariable\\(\"PATH\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"PATH\",\"User\"\\); Set-Location \"C:\\\\Users\\\\Andy\\\\Documents\\\\Amei-Outreach-App\"; npx vite build 2>&1 | Select-String -Pattern \"built in|error\" | Select-Object -First 3)",
-      "PowerShell($env:PATH = [System.Environment]::GetEnvironmentVariable\\(\"PATH\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"PATH\",\"User\"\\); Set-Location \"C:\\\\Users\\\\Andy\\\\Documents\\\\Amei-Outreach-App\"; npx vite build 2>&1 | Select-String -Pattern \"built in|error|Welcome\" | Select-Object -First 4)"
+      "PowerShell($env:PATH = [System.Environment]::GetEnvironmentVariable\\(\"PATH\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"PATH\",\"User\"\\); Set-Location \"C:\\\\Users\\\\Andy\\\\Documents\\\\Amei-Outreach-App\"; npx vite build 2>&1 | Select-String -Pattern \"built in|error|Welcome\" | Select-Object -First 4)",
+      "PowerShell($env:PATH = [System.Environment]::GetEnvironmentVariable\\(\"PATH\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"PATH\",\"User\"\\); Set-Location \"C:\\\\Users\\\\Andy\\\\Documents\\\\Amei-Outreach-App\"; npx tsc --noEmit 2>&1 | Select-Object -First 12; if \\($?\\) { \"TSC OK\" })"
     ]
   }
 }

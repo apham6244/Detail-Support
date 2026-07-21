@@ -13,6 +13,7 @@ import {
   ArrowRight,
   Check,
   CircleDollarSign,
+  ReceiptText,
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
@@ -196,21 +197,86 @@ function AppPreview() {
     // car rather than hugging the panel edge.
     <div
       aria-hidden
-      className="pointer-events-none absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 lg:block"
+      className="pointer-events-none absolute right-[9%] top-1/2 hidden -translate-y-1/2 lg:block xl:right-[11%]"
     >
-      {/* Soft shadow halo — gives the mockup local contrast and makes it sit
-          *in* the scene, instead of darkening the whole photo with a scrim. */}
-      <span className="absolute -inset-12 rounded-[48px] bg-carbon-950/60 blur-3xl" />
+      {/* A gentle ambient wash rather than a halo — just enough local contrast
+          for legibility, without the blurred "blob" that read as floating. */}
+      <span className="absolute -inset-8 rounded-[44px] bg-carbon-950/38 blur-2xl" />
+
+      {/* Secondary screens — tucked BEHIND the primary window in a deliberate
+          cascade, each partially occluded by it. The overlap is what sells
+          "more of the same app" instead of "more floating cards". They only
+          appear where there's genuinely room for them. */}
+      <Screen
+        still={still}
+        delay={0.7}
+        className="hidden xl:block -top-[74px] -left-[198px] w-[230px]"
+      >
+        <ScreenHead icon={Users} label="Customer" />
+        <div className="mt-2 flex items-center gap-2">
+          <span className="flex h-7 w-7 flex-none items-center justify-center rounded-lg bg-gradient-to-br from-violet to-brand-600 font-display text-[10px] font-bold text-white">
+            MW
+          </span>
+          <div className="min-w-0">
+            <div className="truncate text-[11.5px] font-semibold leading-tight text-white">Marcus Williams</div>
+            <div className="truncate text-[9.5px] leading-tight text-white/45">Client since Feb 2026</div>
+          </div>
+        </div>
+        <div className="mt-2 flex flex-col divide-y divide-white/[0.06] border-t border-white/[0.06]">
+          <ScreenRow label="Vehicles" value="3" />
+          <ScreenRow label="Appointments" value="8" />
+          <ScreenRow label="Total spent" value="$1,240" strong />
+        </div>
+      </Screen>
+
+      <Screen
+        still={still}
+        delay={0.82}
+        className="hidden xl:block -bottom-[66px] -left-[178px] w-[238px]"
+      >
+        <ScreenHead icon={ReceiptText} label="Invoice" />
+        <div className="mt-2 flex items-center gap-2">
+          <span className="font-display text-[12px] font-bold tracking-tight text-white">INV-0042</span>
+          <span className="rounded-full bg-success/18 px-1.5 py-[2px] text-[8.5px] font-bold uppercase tracking-wide text-success">
+            Paid
+          </span>
+        </div>
+        <div className="mt-0.5 truncate text-[9.5px] text-white/45">Full Detail · 2024 BMW M4</div>
+        <div className="mt-2 flex items-baseline justify-between border-t border-white/[0.06] pt-2">
+          <span className="text-[9.5px] uppercase tracking-[0.05em] text-white/40">Amount paid</span>
+          <span className="font-display text-[14px] font-bold leading-none tnum text-white">$265.00</span>
+        </div>
+      </Screen>
+
+      <Screen
+        still={still}
+        delay={0.94}
+        recessed
+        className="hidden 2xl:block top-[108px] -left-[246px] w-[208px]"
+      >
+        <ScreenHead icon={Car} label="Vehicle" />
+        <div className="mt-2">
+          <div className="truncate text-[11.5px] font-semibold leading-tight text-white">2024 BMW M4</div>
+          <div className="truncate text-[9.5px] leading-tight text-white/45">Frozen Grey · APX-100</div>
+        </div>
+        <div className="mt-2 flex flex-col divide-y divide-white/[0.06] border-t border-white/[0.06]">
+          <ScreenRow label="Last detail" value="Jul 12" />
+          <ScreenRow label="Details done" value="6" />
+        </div>
+        <p className="mt-2 truncate text-[9px] italic text-white/40">“Garage-kept — ceramic due spring”</p>
+      </Screen>
 
     <motion.div
-      initial={still ? { opacity: 0 } : { opacity: 0, y: 16, scale: 0.985 }}
+      initial={still ? { opacity: 0 } : { opacity: 0, y: 12, scale: 0.99 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ duration: 0.65, delay: 0.15, ease: [0.22, 1, 0.36, 1] }}
       className={cn(
-        "relative w-[286px] overflow-hidden rounded-2xl",
-        "border border-white/[0.14] bg-carbon-950/60 backdrop-blur-2xl backdrop-saturate-150",
-        // deeper, more layered elevation so it reads as a floating product shot
-        "shadow-[0_1px_2px_rgba(0,0,0,0.5),0_14px_32px_-12px_rgba(0,0,0,0.75),0_56px_110px_-36px_rgba(0,0,0,0.95)]"
+        // z-20 keeps the primary screen in front of the secondary ones
+        "relative z-20 w-[312px] overflow-hidden rounded-2xl",
+        // a touch more solid, so it reads as a real surface instead of a ghost
+        "border border-white/[0.14] bg-carbon-950/70 backdrop-blur-2xl backdrop-saturate-150",
+        // softened elevation — present, but blended into the photo
+        "shadow-[0_1px_2px_rgba(0,0,0,0.35),0_10px_24px_-12px_rgba(0,0,0,0.5),0_34px_68px_-30px_rgba(0,0,0,0.62)]"
       )}
     >
       {/* hairline + gloss, matching the app's surfaces */}
@@ -228,7 +294,7 @@ function AppPreview() {
       </div>
 
       {/* Panel 1 — two jobs from today's board (mirrors the Dashboard feed) */}
-      <motion.section {...panel(0.34)} className="relative border-b border-white/[0.07] px-3 py-2.5">
+      <motion.section {...panel(0.34)} className="relative border-b border-white/[0.07] px-3.5 py-3">
         <PanelHead icon={CalendarClock} title="Today" meta="4 jobs" />
         <div className="mt-2 flex flex-col gap-1.5">
           <Appt time="9:00" service="Full Detail" vehicle="2024 BMW M4" status="Confirmed" tone="success" />
@@ -237,7 +303,7 @@ function AppPreview() {
       </motion.section>
 
       {/* Panel 2 — one customer, one line (mirrors a Customers card) */}
-      <motion.section {...panel(0.46)} className="relative flex items-center gap-2.5 border-b border-white/[0.07] px-3 py-2.5">
+      <motion.section {...panel(0.46)} className="relative flex items-center gap-2.5 border-b border-white/[0.07] px-3.5 py-3">
         <span className="flex h-8 w-8 flex-none items-center justify-center rounded-xl bg-gradient-to-br from-violet to-brand-600 font-display text-[11px] font-bold text-white">
           MW
         </span>
@@ -251,11 +317,56 @@ function AppPreview() {
       </motion.section>
 
       {/* Panel 3 — the two numbers that matter (mirrors the Dashboard stats) */}
-      <motion.section {...panel(0.58)} className="relative grid grid-cols-2 gap-2 px-3 py-2.5">
+      <motion.section {...panel(0.58)} className="relative grid grid-cols-2 gap-2 px-3.5 py-3">
         <Tile icon={CircleDollarSign} tone="success" label="Revenue" value="$6,180" trend="+14%" />
         <Tile icon={CalendarClock} tone="brand" label="Jobs" value="32" />
       </motion.section>
     </motion.div>
+    </div>
+  );
+}
+
+/**
+ * A secondary app screen. Same material as the primary window but a step
+ * recessed (softer border, thinner blur, lighter shadow) so the depth order
+ * reads instantly. Entrance-only motion, matching the main panel.
+ */
+function Screen({ className, delay, still, recessed, children }: {
+  className?: string; delay: number; still: boolean | null;
+  recessed?: boolean; children: React.ReactNode;
+}) {
+  return (
+    <motion.div
+      initial={still ? { opacity: 0 } : { opacity: 0, x: -12, y: 6 }}
+      animate={{ opacity: recessed ? 0.88 : 1, x: 0, y: 0 }}
+      transition={{ duration: 0.6, delay, ease: [0.22, 1, 0.36, 1] }}
+      className={cn(
+        "absolute z-10 overflow-hidden rounded-xl px-3 py-2.5",
+        "border border-white/[0.10] bg-carbon-950/62 backdrop-blur-xl backdrop-saturate-150",
+        "shadow-[0_1px_2px_rgba(0,0,0,0.3),0_8px_20px_-10px_rgba(0,0,0,0.45),0_26px_52px_-26px_rgba(0,0,0,0.55)]",
+        className
+      )}
+    >
+      <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/18 to-transparent" />
+      <div className="relative">{children}</div>
+    </motion.div>
+  );
+}
+
+function ScreenHead({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <Icon className="h-3 w-3 text-brand-300" />
+      <span className="text-[9px] font-semibold uppercase tracking-[0.08em] text-white/50">{label}</span>
+    </div>
+  );
+}
+
+function ScreenRow({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
+  return (
+    <div className="flex items-center justify-between py-1">
+      <span className="text-[9.5px] text-white/45">{label}</span>
+      <span className={cn("tnum text-[10.5px] font-semibold", strong ? "text-success" : "text-white/85")}>{value}</span>
     </div>
   );
 }
