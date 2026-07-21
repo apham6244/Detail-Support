@@ -156,9 +156,8 @@ export default function Welcome() {
         {/* Seam blend into the text panel — bottom edge on mobile, left edge on desktop. */}
         <div className="absolute inset-0 bg-gradient-to-t from-carbon-950 to-transparent to-40% lg:hidden" />
         <div className="absolute inset-0 hidden lg:block lg:bg-gradient-to-r lg:from-carbon-950 lg:to-transparent lg:to-15%" />
-        {/* Legibility only where the cards sit — the detailer stays fully lit.
-            A right-edge falloff, not a blanket scrim over the whole photo. */}
-        <div className="absolute inset-y-0 right-0 hidden w-[58%] bg-gradient-to-l from-carbon-950/85 via-carbon-950/45 to-transparent lg:block" />
+        {/* No blanket scrim — the preview carries its own soft shadow halo, so
+            the detailer and the paintwork stay fully lit. */}
 
         <AppPreview />
       </div>
@@ -193,19 +192,25 @@ function AppPreview() {
   return (
     // Positioning lives on a static wrapper: framer-motion writes an inline
     // `transform` on animated elements, which would otherwise clobber the
-    // `-translate-y-1/2` centering utility.
+    // centering utilities. Sits over the middle of the photo — overlapping the
+    // car rather than hugging the panel edge.
     <div
       aria-hidden
-      className="pointer-events-none absolute right-8 top-1/2 hidden -translate-y-1/2 lg:block xl:right-12"
+      className="pointer-events-none absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 lg:block"
     >
+      {/* Soft shadow halo — gives the mockup local contrast and makes it sit
+          *in* the scene, instead of darkening the whole photo with a scrim. */}
+      <span className="absolute -inset-12 rounded-[48px] bg-carbon-950/60 blur-3xl" />
+
     <motion.div
-      initial={still ? { opacity: 0 } : { opacity: 0, y: 18, scale: 0.985 }}
+      initial={still ? { opacity: 0 } : { opacity: 0, y: 16, scale: 0.985 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ duration: 0.65, delay: 0.15, ease: [0.22, 1, 0.36, 1] }}
       className={cn(
-        "w-[324px] overflow-hidden rounded-2xl",
-        "border border-white/[0.13] bg-carbon-950/62 backdrop-blur-2xl backdrop-saturate-150",
-        "shadow-[0_1px_2px_rgba(0,0,0,0.45),0_12px_28px_-10px_rgba(0,0,0,0.7),0_44px_88px_-32px_rgba(0,0,0,0.9)]"
+        "relative w-[286px] overflow-hidden rounded-2xl",
+        "border border-white/[0.14] bg-carbon-950/60 backdrop-blur-2xl backdrop-saturate-150",
+        // deeper, more layered elevation so it reads as a floating product shot
+        "shadow-[0_1px_2px_rgba(0,0,0,0.5),0_14px_32px_-12px_rgba(0,0,0,0.75),0_56px_110px_-36px_rgba(0,0,0,0.95)]"
       )}
     >
       {/* hairline + gloss, matching the app's surfaces */}
@@ -222,47 +227,33 @@ function AppPreview() {
         </span>
       </div>
 
-      {/* Panel 1 — Today's schedule (mirrors the Dashboard schedule feed) */}
-      <motion.section {...panel(0.34)} className="relative border-b border-white/[0.07] px-3.5 py-3">
-        <PanelHead icon={CalendarClock} title="Today's schedule" meta="4 jobs" />
-        <div className="mt-2.5 flex flex-col gap-2">
-          <Appt time="9:00" service="Full Detail" vehicle="2024 BMW M4" who="Marcus Williams" status="Confirmed" tone="success" />
-          <Appt time="11:30" service="Ceramic Coating" vehicle="2023 Tesla Model S" who="Sarah Johnson" status="In progress" tone="amber" />
-          <Appt time="2:00" service="Interior Detail" vehicle="2022 Porsche 911" who="John Smith" status="Scheduled" tone="brand" />
+      {/* Panel 1 — two jobs from today's board (mirrors the Dashboard feed) */}
+      <motion.section {...panel(0.34)} className="relative border-b border-white/[0.07] px-3 py-2.5">
+        <PanelHead icon={CalendarClock} title="Today" meta="4 jobs" />
+        <div className="mt-2 flex flex-col gap-1.5">
+          <Appt time="9:00" service="Full Detail" vehicle="2024 BMW M4" status="Confirmed" tone="success" />
+          <Appt time="11:30" service="Ceramic Coating" vehicle="2023 Tesla Model S" status="In progress" tone="amber" />
         </div>
       </motion.section>
 
-      {/* Panel 2 — Customer overview (mirrors a Customers card) */}
-      <motion.section {...panel(0.46)} className="relative border-b border-white/[0.07] px-3.5 py-3">
-        <PanelHead icon={Users} title="Customer" />
-        <div className="mt-2.5 flex items-center gap-2.5">
-          <span className="flex h-9 w-9 flex-none items-center justify-center rounded-xl bg-gradient-to-br from-violet to-brand-600 font-display text-[12px] font-bold text-white">
-            MW
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <span className="truncate text-[13px] font-semibold text-white">Marcus Williams</span>
-              <span className="flex-none rounded-full bg-violet/20 px-1.5 py-[1px] text-[9px] font-bold uppercase tracking-wide text-violet">VIP</span>
-            </div>
-            <div className="truncate text-[10.5px] text-white/45">Client since Feb 2026</div>
+      {/* Panel 2 — one customer, one line (mirrors a Customers card) */}
+      <motion.section {...panel(0.46)} className="relative flex items-center gap-2.5 border-b border-white/[0.07] px-3 py-2.5">
+        <span className="flex h-8 w-8 flex-none items-center justify-center rounded-xl bg-gradient-to-br from-violet to-brand-600 font-display text-[11px] font-bold text-white">
+          MW
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <span className="truncate text-[12.5px] font-semibold text-white">Marcus Williams</span>
+            <span className="flex-none rounded-full bg-violet/20 px-1.5 py-[1px] text-[8.5px] font-bold uppercase tracking-wide text-violet">VIP</span>
           </div>
-        </div>
-        <div className="mt-2.5 grid grid-cols-3 divide-x divide-white/[0.07] rounded-xl bg-white/[0.04] py-2 ring-1 ring-inset ring-white/[0.06]">
-          <MiniStat value="3" label="Vehicles" />
-          <MiniStat value="8" label="Appointments" />
-          <MiniStat value="$1,240" label="Total spent" />
+          <div className="truncate text-[10px] text-white/45">3 vehicles · 8 visits · $1,240 spent</div>
         </div>
       </motion.section>
 
-      {/* Panel 3 — Business overview (mirrors the Dashboard stat cards) */}
-      <motion.section {...panel(0.58)} className="relative px-3.5 py-3">
-        <PanelHead icon={TrendingUp} title="This month" />
-        <div className="mt-2.5 grid grid-cols-2 gap-2">
-          <Tile icon={CircleDollarSign} tone="success" label="Revenue" value="$6,180" trend="+14%" />
-          <Tile icon={CalendarClock} tone="brand" label="Appointments" value="32" />
-          <Tile icon={Users} tone="violet" label="Customers" value="26" />
-          <Tile icon={TrendingUp} tone="amber" label="Growth" value="+14%" />
-        </div>
+      {/* Panel 3 — the two numbers that matter (mirrors the Dashboard stats) */}
+      <motion.section {...panel(0.58)} className="relative grid grid-cols-2 gap-2 px-3 py-2.5">
+        <Tile icon={CircleDollarSign} tone="success" label="Revenue" value="$6,180" trend="+14%" />
+        <Tile icon={CalendarClock} tone="brand" label="Jobs" value="32" />
       </motion.section>
     </motion.div>
     </div>
@@ -285,29 +276,20 @@ const APPT_TONE = {
   brand: { dot: "bg-brand-400", pill: "bg-brand-500/20 text-brand-200" },
 } as const;
 
-function Appt({ time, service, vehicle, who, status, tone }: {
-  time: string; service: string; vehicle: string; who: string;
+function Appt({ time, service, vehicle, status, tone }: {
+  time: string; service: string; vehicle: string;
   status: string; tone: keyof typeof APPT_TONE;
 }) {
   const t = APPT_TONE[tone];
   return (
-    <div className="flex items-center gap-2.5 rounded-lg bg-white/[0.03] px-2 py-1.5 ring-1 ring-inset ring-white/[0.05]">
+    <div className="flex items-center gap-2 rounded-lg bg-white/[0.03] px-2 py-1.5 ring-1 ring-inset ring-white/[0.05]">
       <span className={cn("h-1.5 w-1.5 flex-none rounded-full", t.dot)} />
-      <span className="w-[38px] flex-none text-[10.5px] font-semibold tnum text-white/55">{time}</span>
+      <span className="w-[34px] flex-none text-[10px] font-semibold tnum text-white/55">{time}</span>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[11.5px] font-semibold leading-tight text-white">{service}</div>
-        <div className="truncate text-[10px] leading-tight text-white/45">{vehicle} · {who}</div>
+        <div className="truncate text-[11px] font-semibold leading-tight text-white">{service}</div>
+        <div className="truncate text-[9.5px] leading-tight text-white/45">{vehicle}</div>
       </div>
-      <span className={cn("flex-none rounded-full px-1.5 py-[2px] text-[9px] font-bold", t.pill)}>{status}</span>
-    </div>
-  );
-}
-
-function MiniStat({ value, label }: { value: string; label: string }) {
-  return (
-    <div className="px-2 text-center">
-      <div className="font-display text-[13px] font-bold leading-none tnum text-white">{value}</div>
-      <div className="mt-1 truncate text-[9px] uppercase tracking-[0.05em] text-white/40">{label}</div>
+      <span className={cn("flex-none rounded-full px-1.5 py-[2px] text-[8.5px] font-bold", t.pill)}>{status}</span>
     </div>
   );
 }
