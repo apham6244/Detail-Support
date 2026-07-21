@@ -1,0 +1,45 @@
+# Render blueprint for the backend API. In Render: New → Blueprint → point at
+# this repo. Set the secret values in the dashboard (marked sync:false below).
+# Works the same on Railway/Fly with their own config — the Dockerfile is the
+# portable option if you prefer.
+services:
+  - type: web
+    name: amei-outreach-api
+    runtime: node
+    rootDir: server
+    region: oregon
+    plan: starter
+    branch: main
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/index.js
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+      # Secrets — set these in the Render dashboard, never commit them.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SENDGRID_API_KEY
+        sync: false
+      - key: SENDGRID_WEBHOOK_VERIFICATION_KEY
+        sync: false
+      # Your deployed frontend origin(s), comma-separated.
+      - key: CORS_ORIGINS
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: EMAIL_PROVIDER
+        value: sendgrid
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_FROM_NAME
+        value: Amei Auto Detailz

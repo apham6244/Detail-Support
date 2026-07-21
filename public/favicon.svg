@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b0f17"/>
+      <stop offset="1" stop-color="#1a2436"/>
+    </linearGradient>
+    <radialGradient id="gloss" cx="0.2" cy="0" r="1">
+      <stop offset="0" stop-color="#2E7BFF" stop-opacity="0.28"/>
+      <stop offset="0.5" stop-color="#2E7BFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="chrome" x1="0" y1="0" x2="0.12" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.18" stop-color="#dbe4f0"/>
+      <stop offset="0.42" stop-color="#9aa6b7"/>
+      <stop offset="0.6" stop-color="#6b7686"/>
+      <stop offset="0.82" stop-color="#4a5361"/>
+      <stop offset="1" stop-color="#39414e"/>
+    </linearGradient>
+    <linearGradient id="swoosh" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#8f9db1"/>
+      <stop offset="0.5" stop-color="#dfe7f1"/>
+      <stop offset="1" stop-color="#aab6c6"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="7" fill="url(#tile)"/>
+  <rect width="32" height="32" rx="7" fill="url(#gloss)"/>
+  <g transform="translate(2.4,7.2) scale(0.178)">
+    <path d="M4 92 C 50 103, 106 84, 138 42 C 112 84, 58 100, 2 95 Z" fill="url(#swoosh)" opacity="0.8"/>
+    <g transform="skewX(-9)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M28 16 L 28 88 M 28 16 C 68 16, 84 34, 84 52 C 84 70, 68 88, 28 88" stroke="#dbe4f0" stroke-width="18.5"/>
+      <path d="M123 29 C 110 17, 92 17, 89 32 C 86 47, 117 45, 117 62 C 116 79, 96 82, 82 69" stroke="#dbe4f0" stroke-width="18.5"/>
+      <path d="M28 16 L 28 88 M 28 16 C 68 16, 84 34, 84 52 C 84 70, 68 88, 28 88" stroke="#0a0d13" stroke-width="15.5"/>
+      <path d="M123 29 C 110 17, 92 17, 89 32 C 86 47, 117 45, 117 62 C 116 79, 96 82, 82 69" stroke="#0a0d13" stroke-width="15.5"/>
+      <path d="M28 16 L 28 88 M 28 16 C 68 16, 84 34, 84 52 C 84 70, 68 88, 28 88" stroke="url(#chrome)" stroke-width="12.5"/>
+      <path d="M123 29 C 110 17, 92 17, 89 32 C 86 47, 117 45, 117 62 C 116 79, 96 82, 82 69" stroke="url(#chrome)" stroke-width="12.5"/>
+    </g>
+    <path d="M120 8 L 123 17 L 132 20 L 123 23 L 120 32 L 117 23 L 108 20 L 117 17 Z" fill="#ffffff"/>
+  </g>
+</svg>
