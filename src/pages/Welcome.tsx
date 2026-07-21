@@ -13,7 +13,6 @@ import {
   ArrowRight,
   Check,
   CircleDollarSign,
-  ReceiptText,
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
@@ -161,7 +160,7 @@ export default function Welcome() {
             A right-edge falloff, not a blanket scrim over the whole photo. */}
         <div className="absolute inset-y-0 right-0 hidden w-[58%] bg-gradient-to-l from-carbon-950/85 via-carbon-950/45 to-transparent lg:block" />
 
-        <PreviewCards />
+        <AppPreview />
       </div>
     </div>
   );
@@ -173,129 +172,167 @@ export default function Welcome() {
 // hold still for anyone who prefers reduced motion.
 // ---------------------------------------------------------------------------
 
-function PreviewCards() {
+/**
+ * A single frosted "app window" holding three panels that mirror real Detail
+ * Support screens — the schedule feed from the Dashboard, a Customers card, and
+ * the monthly stat tiles. One frame (with a title bar) reads as a product
+ * preview rather than three decorative widgets.
+ *
+ * Motion is entrance-only: the window lifts in, then each panel fades up in
+ * sequence and everything holds still. No looping animation.
+ */
+function AppPreview() {
   const still = useReducedMotion();
 
+  const panel = (delay: number) => ({
+    initial: still ? { opacity: 0 } : { opacity: 0, y: 10 },
+    animate: { opacity: 1, y: 0 },
+    transition: { duration: 0.5, delay, ease: [0.22, 1, 0.36, 1] as const },
+  });
+
   return (
+    // Positioning lives on a static wrapper: framer-motion writes an inline
+    // `transform` on animated elements, which would otherwise clobber the
+    // `-translate-y-1/2` centering utility.
     <div
       aria-hidden
-      className="pointer-events-none absolute right-8 top-1/2 hidden w-[290px] -translate-y-1/2 flex-col gap-3.5 lg:flex xl:right-12 xl:w-[310px]"
+      className="pointer-events-none absolute right-8 top-1/2 hidden -translate-y-1/2 lg:block xl:right-12"
     >
-      {/* One aligned column — reads as a single dashboard panel, not scattered
-          bubbles. Depth comes from elevation and blur, never from position. */}
-      <Card index={0} still={still}>
-        <CardHead icon={CalendarClock} title="Today's schedule" meta="4 jobs" />
-        <div className="mt-3 flex flex-col gap-2.5">
-          <Row time="9:00" service="Full Detail" who="Marcus W." tone="success" />
-          <Row time="11:30" service="Ceramic Coating" who="Priya S." tone="brand" />
-          <Row time="2:00" service="Interior Detail" who="John S." tone="violet" />
-        </div>
-      </Card>
-
-      <Card index={1} still={still}>
-        <CardHead icon={CircleDollarSign} title="Revenue this month" />
-        <div className="mt-2 flex items-baseline gap-2">
-          <span className="font-display text-[24px] font-bold leading-none tracking-tight text-white">$6,180</span>
-          <span className="inline-flex items-center gap-0.5 rounded-full bg-success/20 px-1.5 py-0.5 text-[10.5px] font-bold text-success">
-            <TrendingUp className="h-2.5 w-2.5" />+14%
-          </span>
-        </div>
-        {/* tiny bar chart — pure CSS, no chart lib on the landing page */}
-        <div className="mt-3 flex h-9 items-end gap-1.5">
-          {[38, 52, 47, 68, 80, 100].map((h, i) => (
-            <span
-              key={i}
-              style={{ height: `${h}%` }}
-              className={cn("flex-1 rounded-sm", i === 5 ? "bg-brand-400" : "bg-white/22")}
-            />
-          ))}
-        </div>
-      </Card>
-
-      <Card index={2} still={still}>
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-success/20 text-success">
-            <ReceiptText className="h-4 w-4" />
-          </span>
-          <div className="min-w-0">
-            <div className="truncate text-[12.5px] font-semibold text-white">INV-0042 paid</div>
-            <div className="truncate text-[11px] text-white/55">Sarah Johnson · $265.00</div>
-          </div>
-          <span className="ml-auto flex-none rounded-full bg-success/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-success">
-            Paid
-          </span>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-/**
- * A single preview card. Motion is deliberately restrained: a crisp entrance,
- * then an almost-imperceptible 22s breathe (3px of travel + a 0.4% scale) that
- * reads as "alive" rather than "floating". Reduced-motion users get it static.
- */
-function Card({ index, still, children }: {
-  index: number; still: boolean | null; children: React.ReactNode;
-}) {
-  const breathe = still
-    ? {}
-    : {
-        animate: { y: [0, -3, 0], scale: [1, 1.004, 1], opacity: [1, 0.97, 1] },
-        transition: {
-          duration: 22,
-          repeat: Infinity,
-          ease: "easeInOut" as const,
-          delay: index * 2.6,
-        },
-      };
-
-  return (
     <motion.div
-      initial={{ opacity: 0, y: 12, scale: 0.985 }}
+      initial={still ? { opacity: 0 } : { opacity: 0, y: 18, scale: 0.985 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.6, delay: 0.2 + index * 0.11, ease: [0.22, 1, 0.36, 1] }}
+      transition={{ duration: 0.65, delay: 0.15, ease: [0.22, 1, 0.36, 1] }}
+      className={cn(
+        "w-[324px] overflow-hidden rounded-2xl",
+        "border border-white/[0.13] bg-carbon-950/62 backdrop-blur-2xl backdrop-saturate-150",
+        "shadow-[0_1px_2px_rgba(0,0,0,0.45),0_12px_28px_-10px_rgba(0,0,0,0.7),0_44px_88px_-32px_rgba(0,0,0,0.9)]"
+      )}
     >
-      <motion.div
-        {...breathe}
-        className={cn(
-          "relative overflow-hidden rounded-2xl p-3.5",
-          // deeper frosting so the card sits *in* the photo, not on top of it
-          "border border-white/[0.13] bg-carbon-950/55 backdrop-blur-2xl backdrop-saturate-150",
-          // layered elevation: tight contact shadow + wide ambient falloff
-          "shadow-[0_1px_2px_rgba(0,0,0,0.45),0_10px_24px_-10px_rgba(0,0,0,0.7),0_36px_72px_-28px_rgba(0,0,0,0.85)]"
-        )}
-      >
-        {/* hairline top highlight — the same gloss language as the app surfaces */}
-        <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
-        <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-1/3 bg-gradient-to-b from-white/[0.07] to-transparent" />
-        <div className="relative">{children}</div>
-      </motion.div>
-    </motion.div>
-  );
-}
+      {/* hairline + gloss, matching the app's surfaces */}
+      <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
+      <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-white/[0.06] to-transparent" />
 
-function CardHead({ icon: Icon, title, meta }: { icon: LucideIcon; title: string; meta?: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      <Icon className="h-3.5 w-3.5 text-brand-300" />
-      <span className="text-[11.5px] font-semibold text-white/85">{title}</span>
-      {meta && <span className="ml-auto text-[11px] text-white/45">{meta}</span>}
+      {/* Title bar — this is what makes it read as "the app", not a widget */}
+      <div className="relative flex items-center gap-2 border-b border-white/[0.08] px-3.5 py-2.5">
+        <DSIcon size={17} />
+        <span className="font-display text-[11.5px] font-bold tracking-tight text-white/90">Detail Support</span>
+        <span className="ml-auto inline-flex items-center gap-1.5 text-[10px] font-medium text-white/45">
+          <span className="h-1.5 w-1.5 rounded-full bg-success shadow-[0_0_6px_rgba(23,168,103,0.9)]" />
+          Live
+        </span>
+      </div>
+
+      {/* Panel 1 — Today's schedule (mirrors the Dashboard schedule feed) */}
+      <motion.section {...panel(0.34)} className="relative border-b border-white/[0.07] px-3.5 py-3">
+        <PanelHead icon={CalendarClock} title="Today's schedule" meta="4 jobs" />
+        <div className="mt-2.5 flex flex-col gap-2">
+          <Appt time="9:00" service="Full Detail" vehicle="2024 BMW M4" who="Marcus Williams" status="Confirmed" tone="success" />
+          <Appt time="11:30" service="Ceramic Coating" vehicle="2023 Tesla Model S" who="Sarah Johnson" status="In progress" tone="amber" />
+          <Appt time="2:00" service="Interior Detail" vehicle="2022 Porsche 911" who="John Smith" status="Scheduled" tone="brand" />
+        </div>
+      </motion.section>
+
+      {/* Panel 2 — Customer overview (mirrors a Customers card) */}
+      <motion.section {...panel(0.46)} className="relative border-b border-white/[0.07] px-3.5 py-3">
+        <PanelHead icon={Users} title="Customer" />
+        <div className="mt-2.5 flex items-center gap-2.5">
+          <span className="flex h-9 w-9 flex-none items-center justify-center rounded-xl bg-gradient-to-br from-violet to-brand-600 font-display text-[12px] font-bold text-white">
+            MW
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5">
+              <span className="truncate text-[13px] font-semibold text-white">Marcus Williams</span>
+              <span className="flex-none rounded-full bg-violet/20 px-1.5 py-[1px] text-[9px] font-bold uppercase tracking-wide text-violet">VIP</span>
+            </div>
+            <div className="truncate text-[10.5px] text-white/45">Client since Feb 2026</div>
+          </div>
+        </div>
+        <div className="mt-2.5 grid grid-cols-3 divide-x divide-white/[0.07] rounded-xl bg-white/[0.04] py-2 ring-1 ring-inset ring-white/[0.06]">
+          <MiniStat value="3" label="Vehicles" />
+          <MiniStat value="8" label="Appointments" />
+          <MiniStat value="$1,240" label="Total spent" />
+        </div>
+      </motion.section>
+
+      {/* Panel 3 — Business overview (mirrors the Dashboard stat cards) */}
+      <motion.section {...panel(0.58)} className="relative px-3.5 py-3">
+        <PanelHead icon={TrendingUp} title="This month" />
+        <div className="mt-2.5 grid grid-cols-2 gap-2">
+          <Tile icon={CircleDollarSign} tone="success" label="Revenue" value="$6,180" trend="+14%" />
+          <Tile icon={CalendarClock} tone="brand" label="Appointments" value="32" />
+          <Tile icon={Users} tone="violet" label="Customers" value="26" />
+          <Tile icon={TrendingUp} tone="amber" label="Growth" value="+14%" />
+        </div>
+      </motion.section>
+    </motion.div>
     </div>
   );
 }
 
-function Row({ time, service, who, tone }: {
-  time: string; service: string; who: string; tone: "success" | "brand" | "violet";
-}) {
-  const dot = { success: "bg-success", brand: "bg-brand-400", violet: "bg-violet" }[tone];
+function PanelHead({ icon: Icon, title, meta }: { icon: LucideIcon; title: string; meta?: string }) {
   return (
-    <div className="flex items-center gap-2.5">
-      <span className={cn("h-1.5 w-1.5 flex-none rounded-full", dot)} />
-      <span className="w-[42px] flex-none text-[11px] font-semibold tnum text-white/60">{time}</span>
+    <div className="flex items-center gap-1.5">
+      <Icon className="h-3.5 w-3.5 text-brand-300" />
+      <span className="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-white/60">{title}</span>
+      {meta && <span className="ml-auto text-[10.5px] text-white/40">{meta}</span>}
+    </div>
+  );
+}
+
+const APPT_TONE = {
+  success: { dot: "bg-success", pill: "bg-success/18 text-success" },
+  amber: { dot: "bg-warning", pill: "bg-warning/18 text-warning" },
+  brand: { dot: "bg-brand-400", pill: "bg-brand-500/20 text-brand-200" },
+} as const;
+
+function Appt({ time, service, vehicle, who, status, tone }: {
+  time: string; service: string; vehicle: string; who: string;
+  status: string; tone: keyof typeof APPT_TONE;
+}) {
+  const t = APPT_TONE[tone];
+  return (
+    <div className="flex items-center gap-2.5 rounded-lg bg-white/[0.03] px-2 py-1.5 ring-1 ring-inset ring-white/[0.05]">
+      <span className={cn("h-1.5 w-1.5 flex-none rounded-full", t.dot)} />
+      <span className="w-[38px] flex-none text-[10.5px] font-semibold tnum text-white/55">{time}</span>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[12px] font-medium text-white">{service}</div>
-        <div className="truncate text-[10.5px] text-white/45">{who}</div>
+        <div className="truncate text-[11.5px] font-semibold leading-tight text-white">{service}</div>
+        <div className="truncate text-[10px] leading-tight text-white/45">{vehicle} · {who}</div>
+      </div>
+      <span className={cn("flex-none rounded-full px-1.5 py-[2px] text-[9px] font-bold", t.pill)}>{status}</span>
+    </div>
+  );
+}
+
+function MiniStat({ value, label }: { value: string; label: string }) {
+  return (
+    <div className="px-2 text-center">
+      <div className="font-display text-[13px] font-bold leading-none tnum text-white">{value}</div>
+      <div className="mt-1 truncate text-[9px] uppercase tracking-[0.05em] text-white/40">{label}</div>
+    </div>
+  );
+}
+
+const TILE_TONE = {
+  success: "bg-success/15 text-success",
+  brand: "bg-brand-500/18 text-brand-200",
+  violet: "bg-violet/18 text-violet",
+  amber: "bg-warning/15 text-warning",
+} as const;
+
+function Tile({ icon: Icon, tone, label, value, trend }: {
+  icon: LucideIcon; tone: keyof typeof TILE_TONE; label: string; value: string; trend?: string;
+}) {
+  return (
+    <div className="rounded-lg bg-white/[0.04] px-2.5 py-2 ring-1 ring-inset ring-white/[0.06]">
+      <div className="flex items-center gap-1.5">
+        <span className={cn("flex h-5 w-5 flex-none items-center justify-center rounded-md", TILE_TONE[tone])}>
+          <Icon className="h-3 w-3" />
+        </span>
+        <span className="truncate text-[9.5px] uppercase tracking-[0.05em] text-white/45">{label}</span>
+      </div>
+      <div className="mt-1.5 flex items-baseline gap-1">
+        <span className="font-display text-[15px] font-bold leading-none tnum text-white">{value}</span>
+        {trend && <span className="text-[9.5px] font-bold text-success">{trend}</span>}
       </div>
     </div>
   );
