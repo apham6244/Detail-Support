@@ -195,13 +195,17 @@ function AppPreview() {
     // `transform` on animated elements, which would otherwise clobber the
     // centering utilities. Sits over the middle of the photo — overlapping the
     // car rather than hugging the panel edge.
+    // Placement is measured, not eyeballed: sampling the hero photo shows the
+    // detailer's arm occupies the centre band (~50% skin pixels) while the
+    // upper-right is dark and clean (~1-5%). Sitting the cluster there keeps
+    // warm skin tones from bleeding through the frosted panels.
     <div
       aria-hidden
-      className="pointer-events-none absolute right-[9%] top-1/2 hidden -translate-y-1/2 lg:block xl:right-[11%]"
+      className="pointer-events-none absolute right-[7%] top-[37%] hidden -translate-y-1/2 lg:block xl:right-[8%]"
     >
-      {/* A gentle ambient wash rather than a halo — just enough local contrast
-          for legibility, without the blurred "blob" that read as floating. */}
-      <span className="absolute -inset-8 rounded-[44px] bg-carbon-950/38 blur-2xl" />
+      {/* A tight, low-blur separation behind the cluster — enough to lift it off
+          the photo without reading as a glow. */}
+      <span className="absolute -inset-6 rounded-[40px] bg-carbon-950/45 blur-xl" />
 
       {/* Secondary screens — tucked BEHIND the primary window in a deliberate
           cascade, each partially occluded by it. The overlap is what sells
@@ -210,7 +214,7 @@ function AppPreview() {
       <Screen
         still={still}
         delay={0.7}
-        className="hidden xl:block -top-[74px] -left-[198px] w-[230px]"
+        className="hidden xl:block -top-[28px] -left-[198px] w-[230px]"
       >
         <ScreenHead icon={Users} label="Customer" />
         <div className="mt-2 flex items-center gap-2">
@@ -232,7 +236,7 @@ function AppPreview() {
       <Screen
         still={still}
         delay={0.82}
-        className="hidden xl:block -bottom-[66px] -left-[178px] w-[238px]"
+        className="hidden xl:block top-[142px] -left-[178px] w-[238px]"
       >
         <ScreenHead icon={ReceiptText} label="Invoice" />
         <div className="mt-2 flex items-center gap-2">
@@ -252,7 +256,7 @@ function AppPreview() {
         still={still}
         delay={0.94}
         recessed
-        className="hidden 2xl:block top-[108px] -left-[246px] w-[208px]"
+        className="hidden 2xl:block top-[284px] -left-[330px] w-[196px]"
       >
         <ScreenHead icon={Car} label="Vehicle" />
         <div className="mt-2">
@@ -273,10 +277,12 @@ function AppPreview() {
       className={cn(
         // z-20 keeps the primary screen in front of the secondary ones
         "relative z-20 w-[312px] overflow-hidden rounded-2xl",
-        // a touch more solid, so it reads as a real surface instead of a ghost
-        "border border-white/[0.14] bg-carbon-950/70 backdrop-blur-2xl backdrop-saturate-150",
-        // softened elevation — present, but blended into the photo
-        "shadow-[0_1px_2px_rgba(0,0,0,0.35),0_10px_24px_-12px_rgba(0,0,0,0.5),0_34px_68px_-30px_rgba(0,0,0,0.62)]"
+        // Near-solid carbon + a DESATURATED backdrop. `backdrop-saturate-150`
+        // was actively amplifying whatever sat behind the glass, which is what
+        // pulled the detailer's skin tones through as an orange cast.
+        "border border-white/[0.16] bg-carbon-950/88 backdrop-blur-xl backdrop-saturate-50",
+        // crisp contact edge + restrained ambient falloff (no glow)
+        "shadow-[0_1px_1px_rgba(0,0,0,0.5),0_2px_6px_rgba(0,0,0,0.4),0_18px_36px_-14px_rgba(0,0,0,0.6),0_40px_80px_-36px_rgba(0,0,0,0.7)]"
       )}
     >
       {/* hairline + gloss, matching the app's surfaces */}
@@ -342,8 +348,9 @@ function Screen({ className, delay, still, recessed, children }: {
       transition={{ duration: 0.6, delay, ease: [0.22, 1, 0.36, 1] }}
       className={cn(
         "absolute z-10 overflow-hidden rounded-xl px-3 py-2.5",
-        "border border-white/[0.10] bg-carbon-950/62 backdrop-blur-xl backdrop-saturate-150",
-        "shadow-[0_1px_2px_rgba(0,0,0,0.3),0_8px_20px_-10px_rgba(0,0,0,0.45),0_26px_52px_-26px_rgba(0,0,0,0.55)]",
+        // same desaturated frosting, one step more recessed than the primary
+        "border border-white/[0.12] bg-carbon-950/82 backdrop-blur-lg backdrop-saturate-50",
+        "shadow-[0_1px_1px_rgba(0,0,0,0.45),0_2px_5px_rgba(0,0,0,0.35),0_14px_28px_-12px_rgba(0,0,0,0.5),0_30px_60px_-30px_rgba(0,0,0,0.6)]",
         className
       )}
     >
