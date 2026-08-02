@@ -24,7 +24,7 @@ function DemoBanner() {
       initial={{ y: -28, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-      className="relative z-30 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-brand-400/25 bg-gradient-to-r from-brand-600 to-brand-500 px-4 py-2.5 text-white md:px-[26px]"
+      className="relative z-30 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-brand-400/25 bg-gradient-to-r from-brand-600 to-brand-500 px-4 pb-2.5 pt-[calc(0.625rem+env(safe-area-inset-top))] text-white md:px-[26px] md:pt-2.5"
     >
       <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/15 to-transparent" />
       <span className="relative flex h-6 w-6 flex-none items-center justify-center rounded-lg bg-white/15">
