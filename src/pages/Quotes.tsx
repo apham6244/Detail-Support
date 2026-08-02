@@ -14,7 +14,9 @@ import {
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { Modal, Field } from "@/components/ui/Modal";
-import { Th, Td, IconBtn, Loading, EmptyState, SignInPrompt, money } from "@/components/ui/data";
+import { Th, Td, IconBtn, EmptyState, SignInPrompt, money } from "@/components/ui/data";
+import { confirm, toast } from "@/components/ui/feedback";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 import { useQuotes, type QuoteInput } from "@/hooks/useQuotes";
 import { useCustomers } from "@/hooks/useCustomers";
 import { useServices } from "@/hooks/useServices";
@@ -83,7 +85,7 @@ export default function Quotes() {
   const detail = quotes.find((q) => q.id === detailId) ?? null;
 
   // ---- gates ----
-  if (ent.loading) return <Loading />;
+  if (ent.loading) return <PageSkeleton variant="table" kpis={0} />;
   if (!ent.hasFeature("quotes")) {
     return (
       <div className="animate-fade-up">
@@ -186,7 +188,7 @@ export default function Quotes() {
       {!ready ? (
         <SignInPrompt what="quotes" />
       ) : loading ? (
-        <Loading />
+        <PageSkeleton variant="table" kpis={0} header={false} />
       ) : quotes.length === 0 ? (
         <EmptyState
           art="receipt"
@@ -199,7 +201,27 @@ export default function Quotes() {
           }
         />
       ) : (
-        <div className="overflow-x-auto">
+        <>
+          {/* Mobile: cards — the quotes table scrolls sideways on a phone */}
+          <div className="flex flex-col gap-3 md:hidden">
+            {quotes.map((q) => (
+              <button key={q.id} onClick={() => setDetailId(q.id)}
+                className="surface flex items-center gap-3 rounded-2xl p-4 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand-500/40">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-display text-[15px] font-bold tracking-tight text-ink">{q.number}</span>
+                    <StatusPill q={q} />
+                  </div>
+                  <div className="mt-0.5 truncate text-[12.5px] text-ink2">{q.customer?.name ?? "—"}</div>
+                  <div className="mt-1 text-[11.5px] text-ink3">Valid until {fmtDate(q.valid_until)}</div>
+                </div>
+                <div className="flex-none font-display text-[15px] font-bold tnum text-ink">{money(q.total)}</div>
+              </button>
+            ))}
+          </div>
+
+          {/* Tablet & desktop: table */}
+          <div className="hidden overflow-x-auto md:block">
           <table className="w-full min-w-[680px] border-collapse text-[13px]">
             <thead>
               <tr className="bg-panel2 text-left text-[11px] uppercase tracking-[0.07em] text-ink3">
@@ -230,7 +252,8 @@ export default function Quotes() {
               ))}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
 
       {/* Create / edit */}
@@ -531,13 +554,15 @@ function QuoteDetail({
           <IconBtn
             label="Delete quote"
             danger
-            onClick={() =>
-              window.confirm(`Delete quote ${quote.number}?`) &&
-              run(async () => {
-                await api.remove(quote.id);
-                onClose();
-              })
-            }
+            onClick={async () => {
+              if (await confirm({ title: `Delete quote ${quote.number}?`, body: "This permanently removes the quote and its line items.", confirmLabel: "Delete quote", tone: "danger" })) {
+                run(async () => {
+                  await api.remove(quote.id);
+                  onClose();
+                  toast.success("Quote deleted");
+                });
+              }
+            }}
           >
             <Trash2 className="h-4 w-4" />
           </IconBtn>

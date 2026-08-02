@@ -1,10 +1,14 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Outlet } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Eye, ArrowRight, X } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
+import { BottomNav } from "./BottomNav";
+import { CommandPalette } from "@/components/CommandPalette";
+import { Toaster, ConfirmHost } from "@/components/ui/feedback";
 import { EntitlementsProvider } from "@/lib/entitlements";
+import { prefetchLikelyRoutes } from "@/lib/prefetch";
 import { isDemo, leaveDemo } from "@/lib/demo";
 
 /**
@@ -52,6 +56,22 @@ function DemoBanner() {
 
 export function AppLayout() {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [cmdOpen, setCmdOpen] = useState(false);
+
+  // Warm the routes a signed-in detailer reaches for next, once the shell is idle.
+  useEffect(() => { prefetchLikelyRoutes(); }, []);
+
+  // Global ⌘K / Ctrl+K opens the command palette from anywhere.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCmdOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   return (
     <EntitlementsProvider>
@@ -89,11 +109,26 @@ export function AppLayout() {
       {/* Main column */}
       <div className="flex min-w-0 flex-col">
         <DemoBanner />
-        <Topbar onMenu={() => setDrawerOpen(true)} />
-        <main className="scrollbar-slim flex-1 overflow-auto px-4 py-6 md:px-[26px] md:pb-12">
-          <Outlet />
+        <Topbar onMenu={() => setDrawerOpen(true)} onSearch={() => setCmdOpen(true)} />
+        {/* Extra bottom padding on mobile clears the fixed bottom nav (+ safe area). */}
+        <main className="scrollbar-slim flex-1 overflow-auto px-4 py-6 pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:px-[26px] md:pb-12">
+          {/* Cap content on ultra-wide displays so a dashboard never runs the full
+              width of a 27" monitor; centered, with the gutters absorbing extra space. */}
+          <div className="mx-auto w-full max-w-[1560px]">
+            <Outlet />
+          </div>
         </main>
       </div>
+
+      {/* Mobile bottom navigation — thumb-reachable primary nav */}
+      <BottomNav onMore={() => setDrawerOpen(true)} />
+
+      {/* Global ⌘K command palette */}
+      <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
+
+      {/* App-wide feedback layer */}
+      <Toaster />
+      <ConfirmHost />
     </div>
     </EntitlementsProvider>
   );

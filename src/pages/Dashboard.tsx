@@ -22,19 +22,29 @@ import {
   Send,
   Clock,
   BellRing,
+  Target,
+  Trophy,
+  Crown,
+  Flame,
+  Lightbulb,
+  Repeat,
+  ReceiptText,
+  ArrowUpRight,
   type LucideIcon,
 } from "lucide-react";
-import { SignInPrompt, money } from "@/components/ui/data";
+import { SignInPrompt, InlineEmpty, money } from "@/components/ui/data";
 import { EmptyArt } from "@/components/ui/EmptyArt";
 import { DetailImage } from "@/components/ui/DetailImage";
 import { CountUp } from "@/components/ui/CountUp";
-import { Skeleton, SkeletonTiles } from "@/components/ui/Skeleton";
+import { SkeletonHero, SkeletonKpiCards, SkeletonChartPanel, SkeletonDonutPanel } from "@/components/ui/Skeleton";
 import { PHOTO, unsplash } from "@/lib/imagery";
 import { useAuth } from "@/lib/auth";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { useCustomers } from "@/hooks/useCustomers";
 import { useAppointments } from "@/hooks/useAppointments";
 import { useInvoices } from "@/hooks/useInvoices";
+import { useServices } from "@/hooks/useServices";
+import { OnboardingChecklist } from "@/components/onboarding/OnboardingChecklist";
 import {
   vehicleLabel,
   APPOINTMENT_STATUS_LABEL,
@@ -50,6 +60,16 @@ const ACCENT_BUBBLE: Record<Accent, string> = {
   success: "bg-success/12 text-success ring-success/15",
   violet: "bg-violet/12 text-violet ring-violet/15",
   warning: "bg-warning/12 text-warning ring-warning/15",
+};
+
+/** Business-coach classification — a badge + its colour, so each tip reads like
+ *  advice from an assistant (what kind, how urgent) rather than a flat line. */
+type CoachBadge = "opportunity" | "warning" | "success" | "recommendation";
+const BADGE: Record<CoachBadge, { label: string; cls: string }> = {
+  opportunity:    { label: "Opportunity",    cls: "bg-violet/12 text-violet ring-violet/25" },
+  warning:        { label: "Needs action",   cls: "bg-warning/12 text-warning ring-warning/25" },
+  success:        { label: "On track",       cls: "bg-success/12 text-success ring-success/25" },
+  recommendation: { label: "Tip",            cls: "bg-brand-500/12 text-brand-500 ring-brand-500/25" },
 };
 
 const APPT_BADGE: Record<AppointmentStatus, string> = {
@@ -87,6 +107,7 @@ export default function Dashboard() {
   const { customers, loading: cL } = useCustomers();
   const { appointments, loading: aL } = useAppointments();
   const { invoices, loading: iL } = useInvoices();
+  const { services } = useServices();
 
   const m = useMemo(() => {
     const now = new Date();
@@ -208,13 +229,178 @@ export default function Dashboard() {
     };
   }, [appointments, invoices, customers]);
 
+  /**
+   * Goals, coach insights, spotlight and the activity feed. Goals are AUTO-SET
+   * from trailing performance (there's no goal field to store a target), so they
+   * read as an ambitious-but-real pace rather than an arbitrary number.
+   */
+  const x = useMemo(() => {
+    const now = new Date();
+    const collected = (inv: (typeof invoices)[number]) =>
+      inv.status === "paid" ? inv.total : inv.status === "deposit_paid" ? inv.deposit_amount : 0;
+
+    // 6-month monthly counts for jobs + customers (revenue series already on m)
+    const jobsByMonth: number[] = [];
+    const custByMonth: number[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const n = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+      jobsByMonth.push(appointments.filter((a) => a.status === "completed" && new Date(a.scheduled_at) >= d && new Date(a.scheduled_at) < n).length);
+      custByMonth.push(customers.filter((c) => new Date(c.created_at) >= d && new Date(c.created_at) < n).length);
+    }
+    const best = (arr: number[]) => arr.reduce((a, b) => Math.max(a, b), 0);
+    const thisRev = m.revSeries[5].value, lastRev = m.revSeries[4].value;
+    const thisJobs = jobsByMonth[5], lastJobs = jobsByMonth[4];
+    const thisCust = custByMonth[5], lastCust = custByMonth[4];
+
+    // Targets are a ~15% stretch on LAST month (not this one) — a goal you work
+    // toward, and can legitimately beat in a strong month. `best` keeps a floor
+    // so a single quiet month doesn't make the target trivially easy.
+    const revGoal = Math.max(500, Math.ceil(Math.max(lastRev * 1.15, best(m.revSeries.slice(0, 5).map((r) => r.value))) / 100) * 100);
+    const jobsGoal = Math.max(5, Math.ceil(Math.max(lastJobs * 1.15, best(jobsByMonth.slice(0, 5)))));
+    const custGoal = Math.max(3, Math.ceil(Math.max(lastCust * 1.2, best(custByMonth.slice(0, 5)))));
+    // Month-to-date pace → a projected month-end total and an ETA. Cumulative
+    // metrics (revenue/jobs/new customers) scale ~linearly across the month, so
+    // dividing by the fraction of the month elapsed gives an honest forecast.
+    const dayOfMonth = now.getDate();
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const frac = dayOfMonth / daysInMonth;
+    const forecast = (cur: number, goal: number) => {
+      const remaining = Math.max(0, goal - cur);
+      const projected = frac > 0 ? cur / frac : cur;
+      if (cur >= goal) return { remaining: 0, projected, done: true, onTrack: true, earlyDays: 0 };
+      const onTrack = projected >= goal;
+      // day of month the goal is reached at the current daily rate
+      const hitDay = cur > 0 ? (goal * dayOfMonth) / cur : Infinity;
+      const earlyDays = Math.max(0, Math.round(daysInMonth - hitDay));
+      return { remaining, projected, done: false, onTrack, earlyDays };
+    };
+    const goals = [
+      { key: "rev", label: "Revenue goal", icon: DollarSign, cur: thisRev, goal: revGoal, money: true, tone: "green" as const, ...forecast(thisRev, revGoal) },
+      { key: "jobs", label: "Jobs goal", icon: CheckCircle2, cur: thisJobs, goal: jobsGoal, money: false, tone: "blue" as const, ...forecast(thisJobs, jobsGoal) },
+      { key: "cust", label: "New customers", icon: UserPlus, cur: thisCust, goal: custGoal, money: false, tone: "purple" as const, ...forecast(thisCust, custGoal) },
+    ];
+
+    // one motivational line — the nearest reachable goal
+    const jobsLeft = Math.max(0, jobsGoal - thisJobs);
+    const revLeft = Math.max(0, revGoal - thisRev);
+    const custLeft = Math.max(0, custGoal - thisCust);
+    let insight: string;
+    if (thisRev >= revGoal && thisJobs >= jobsGoal) insight = "You've hit your monthly goals — outstanding month. 🏆";
+    else if (jobsLeft > 0 && jobsLeft <= 4) insight = `You're only ${jobsLeft} ${jobsLeft === 1 ? "job" : "jobs"} away from your monthly target.`;
+    else if (revLeft > 0 && revLeft <= revGoal * 0.35) insight = `Just ${money(revLeft)} to go to reach your revenue goal.`;
+    else if (custLeft > 0 && custLeft <= 3) insight = `${custLeft} more new ${custLeft === 1 ? "customer" : "customers"} hits your growth goal.`;
+    else insight = "You're building steady momentum this month.";
+
+    // busiest / quietest weekday, top service (for the coach)
+    const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const dayCounts = [0, 0, 0, 0, 0, 0, 0];
+    const svc: Record<string, { count: number; revenue: number }> = {};
+    for (const a of appointments) {
+      dayCounts[new Date(a.scheduled_at).getDay()]++;
+      if (a.status === "completed") {
+        const nm = a.service?.name ?? "Service";
+        (svc[nm] ??= { count: 0, revenue: 0 });
+        svc[nm].count++; svc[nm].revenue += a.price ?? 0;
+      }
+    }
+    const busiestDay = dayCounts.some((n) => n > 0) ? dayNames[dayCounts.indexOf(best(dayCounts))] : null;
+    const topSvc = Object.entries(svc).sort((a, b) => b[1].revenue - a[1].revenue)[0] ?? null;
+
+    const coach: { icon: LucideIcon; tone: Accent; category: string; badge: CoachBadge; text: ReactNode }[] = [];
+    if (m.revenueGrowth !== 0 && lastRev > 0) {
+      const up = m.revenueGrowth >= 0;
+      coach.push({ icon: up ? Flame : TrendingDown, tone: up ? "success" : "warning",
+        category: "Revenue", badge: up ? "success" : "warning",
+        text: <>Revenue is <b className={up ? "text-success" : "text-warning"}>{up ? "up" : "down"} {Math.abs(Math.round(m.revenueGrowth))}%</b> versus last month{up ? " — keep the pace." : ". A follow-up push could recover it."}</> });
+    }
+    if (m.lapsedCount > 0) {
+      coach.push({ icon: Repeat, tone: "warning", category: "Customers", badge: "warning",
+        text: <><b className="text-ink">{m.lapsedCount}</b> {m.lapsedCount === 1 ? "customer hasn't" : "customers haven't"} been in for 60+ days — a quick text often wins them back.</> });
+    }
+    if (topSvc) {
+      coach.push({ icon: Trophy, tone: "violet", category: "Services", badge: "opportunity",
+        text: <>Upsell more <b className="text-ink">{topSvc[0]}</b> — it's your highest earner at {money(topSvc[1].revenue)}.</> });
+    }
+    if (busiestDay) {
+      coach.push({ icon: CalendarClock, tone: "brand", category: "Scheduling", badge: "recommendation",
+        text: <><b className="text-ink">{busiestDay}</b> is your busiest day — protect that slot and upsell add-ons.</> });
+    }
+    if (m.unconfirmedToday > 0) {
+      coach.push({ icon: BellRing, tone: "warning", category: "Scheduling", badge: "warning",
+        text: <>Confirm the <b className="text-ink">{m.unconfirmedToday}</b> unconfirmed {m.unconfirmedToday === 1 ? "job" : "jobs"} on today's board to avoid no-shows.</> });
+    }
+
+    // customer spotlight — the highest-spending repeat customer
+    const spendByCust: Record<string, number> = {};
+    for (const inv of invoices) spendByCust[inv.customer_id] = (spendByCust[inv.customer_id] ?? 0) + collected(inv);
+    const apptsByCust: Record<string, typeof appointments> = {};
+    for (const a of appointments) (apptsByCust[a.customer_id] ??= []).push(a);
+    let spotlight: null | {
+      id: string; name: string; spend: number; lastVisit: string | null; favService: string | null;
+      visits: number; avgTicket: number; vehicle: string | null; dueInDays: number | null;
+      likelihood: "High" | "Medium" | "Low"; upsell: string | null;
+    } = null;
+    const ranked = customers
+      .map((c) => ({ c, spend: spendByCust[c.id] ?? 0, appts: apptsByCust[c.id] ?? [] }))
+      .filter((r) => (r.appts.filter((a) => a.status === "completed").length) >= 2)
+      .sort((a, b) => b.spend - a.spend);
+    if (ranked[0]) {
+      const { c, spend, appts } = ranked[0];
+      const done = appts.filter((a) => a.status === "completed").sort((a, b) => b.scheduled_at.localeCompare(a.scheduled_at));
+      const svcCount: Record<string, number> = {};
+      for (const a of done) svcCount[a.service?.name ?? "Service"] = (svcCount[a.service?.name ?? "Service"] ?? 0) + 1;
+      const fav = Object.entries(svcCount).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+      const visits = done.length;
+      const vh = done.find((a) => a.vehicle)?.vehicle ?? null;
+      // Rebooking cadence — average gap between their completed visits.
+      const times = done.map((a) => new Date(a.scheduled_at).getTime()).sort((p, q) => p - q);
+      let cadence: number | null = null;
+      if (times.length >= 2) {
+        let sum = 0; for (let i = 1; i < times.length; i++) sum += times[i] - times[i - 1];
+        cadence = Math.round(sum / (times.length - 1) / 86_400_000);
+      }
+      const daysSince = times.length ? Math.floor((Date.now() - times[times.length - 1]) / 86_400_000) : 0;
+      const dueInDays = cadence != null ? cadence - daysSince : null;
+      const likelihood: "High" | "Medium" | "Low" = cadence != null
+        ? (daysSince <= cadence ? "High" : daysSince <= cadence * 1.5 ? "Medium" : "Low")
+        : (daysSince <= 45 ? "High" : daysSince <= 90 ? "Medium" : "Low");
+      const booked = new Set(done.map((a) => a.service?.name).filter(Boolean));
+      const upsell = services
+        .filter((sv) => sv.active !== false && !booked.has(sv.name))
+        .sort((a, b) => b.price - a.price)[0]?.name ?? null;
+      spotlight = {
+        id: c.id, name: c.name, spend, lastVisit: done[0]?.scheduled_at ?? null, favService: fav,
+        visits, avgTicket: visits ? spend / visits : 0, vehicle: vh ? vehicleLabel(vh) : null,
+        dueInDays, likelihood, upsell,
+      };
+    }
+
+    // recent activity — merged, newest first
+    type Act = { at: string; icon: LucideIcon; tone: Accent; text: ReactNode };
+    const acts: Act[] = [];
+    for (const a of appointments) {
+      if (a.status === "completed") acts.push({ at: a.scheduled_at, icon: CheckCircle2, tone: "success", text: <><b className="text-ink">{a.service?.name ?? "Detail"}</b> completed for {a.customer?.name ?? "a customer"}</> });
+    }
+    for (const inv of invoices) {
+      if (inv.status === "paid") acts.push({ at: inv.issued_at || inv.created_at, icon: ReceiptText, tone: "success", text: <>Invoice <b className="text-ink">{inv.number ?? ""}</b> paid · {money(inv.total)}</> });
+    }
+    for (const c of customers) acts.push({ at: c.created_at, icon: UserPlus, tone: "brand", text: <><b className="text-ink">{c.name}</b> added as a customer</> });
+    const activity = acts.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 6);
+
+    return { goals, insight, coach: coach.slice(0, 4), spotlight, activity };
+  }, [appointments, invoices, customers, services, m]);
+
   if (!org) return <SignInPrompt what="dashboard" />;
   if (cL && aL && iL && !customers.length && !appointments.length && !invoices.length) {
     return (
-      <div className="animate-fade-up flex flex-col gap-5">
-        <Skeleton className="h-52 w-full rounded-2xl" />
-        <SkeletonTiles count={4} />
-        <Skeleton className="h-64 w-full rounded-2xl" />
+      <div className="animate-fade-up flex flex-col gap-6">
+        <SkeletonHero />
+        <SkeletonKpiCards count={4} />
+        <div className="grid gap-6 lg:grid-cols-[1.6fr_1fr]">
+          <SkeletonChartPanel />
+          <SkeletonDonutPanel />
+        </div>
       </div>
     );
   }
@@ -229,17 +415,27 @@ export default function Dashboard() {
   const showInsights = showRevenue && m.hasRevenue;
 
   return (
-    <div className="animate-fade-up">
+    <div className="animate-fade-up relative">
+      {/* Ambient light — the hero's blue bleeds down into the page so the sections
+          below read as one continuous surface instead of a dark card on white. */}
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 -top-10 -z-10 h-[620px] overflow-hidden">
+        <div className="absolute left-1/2 top-24 h-[460px] w-[min(1100px,125%)] -translate-x-1/2 rounded-full bg-brand-500/[0.07] blur-[120px]" />
+        <div className="absolute right-[6%] top-56 h-64 w-64 rounded-full bg-violet/[0.06] blur-[100px]" />
+      </div>
+
       {/* Premium command-center hero */}
-      <div className="relative min-h-[210px] overflow-hidden rounded-2xl shadow-hero-dark sm:min-h-[236px]">
+      <div className="relative min-h-[248px] overflow-hidden rounded-[24px] shadow-hero-dark sm:min-h-[288px]">
         <DetailImage
           src={unsplash(PHOTO.glossyBlack, { w: 1600, q: 60 })}
           alt="Freshly detailed car with a deep gloss finish"
           className="absolute inset-0"
           eager
         />
-        <div className="absolute inset-0 bg-gradient-to-r from-carbon-950 via-carbon-950/85 to-carbon-950/25" />
+        {/* richer, layered overlay — reads on the photo, dissolves into the app */}
+        <div className="absolute inset-0 bg-gradient-to-r from-carbon-950 via-carbon-950/88 to-carbon-950/20" />
+        <div className="absolute inset-0 bg-gradient-to-t from-carbon-950/70 to-transparent to-55%" />
         <div className="absolute inset-0 bg-paint-gloss opacity-70" />
+        <div aria-hidden className="pointer-events-none absolute -left-16 -top-16 h-64 w-64 rounded-full bg-brand-500/20 blur-[90px]" />
         <div className="relative px-5 py-7 sm:px-9 sm:py-9">
           <div className="flex items-center gap-2 text-[11.5px] font-semibold uppercase tracking-[0.15em] text-brand-300">
             <span className="relative flex h-1.5 w-1.5">
@@ -257,11 +453,28 @@ export default function Dashboard() {
             {firstName ? `, ${firstName}` : ""} <span className="align-middle">👋</span>
           </h1>
 
-          <div className="mt-5 flex flex-wrap gap-2.5">
+          {/* motivational, data-driven insight */}
+          {showRevenue && (
+            <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/[0.07] px-3 py-1.5 text-[12.5px] font-medium text-white/85 backdrop-blur-md">
+              <Sparkles className="h-3.5 w-3.5 text-brand-300" />
+              {x.insight}
+            </div>
+          )}
+
+          <div className="mt-4 flex flex-wrap gap-2.5">
             <HeroStat icon={CalendarClock} label="Today's jobs" value={m.todays.length} />
             {showRevenue && <HeroStat icon={DollarSign} label="Today's revenue" value={m.todayRevenue} money />}
             <HeroStat icon={CheckCircle2} label="Completed today" value={m.completedToday} />
           </div>
+
+          {/* monthly goal progress — glass mini-bars */}
+          {showRevenue && (
+            <div className="mt-4 grid max-w-2xl gap-2.5 sm:grid-cols-3">
+              {x.goals.map((g) => (
+                <HeroGoal key={g.key} label={g.label} cur={g.cur} goal={g.goal} money={g.money} />
+              ))}
+            </div>
+          )}
 
           <div className="mt-5 flex flex-wrap gap-2.5">
             {canInvoice ? (
@@ -276,6 +489,17 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* First-run setup guide — owners/admins only; hides once dismissed. */}
+      {role !== "employee" && (
+        <OnboardingChecklist
+          hasBusiness={Boolean(org)}
+          customers={customers.length}
+          services={services.length}
+          appointments={appointments.length}
+          invoices={invoices.length}
+        />
+      )}
 
       {/* Needs attention — only appears when something actually needs doing */}
       <NeedsAttention
@@ -313,13 +537,27 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Grow your business */}
+      {/* Premium insights — coach + goals, then spotlight + activity */}
+      {showInsights && (
+        <>
+          <div className="mt-3.5 grid gap-3.5 lg:grid-cols-[1.4fr_1fr]">
+            <BusinessCoach items={x.coach} />
+            <GoalsWidget goals={x.goals} />
+          </div>
+          <div className="mt-3.5 grid gap-3.5 lg:grid-cols-2">
+            {x.spotlight && <SpotlightWidget s={x.spotlight} />}
+            <ActivityWidget items={x.activity} className={x.spotlight ? "" : "lg:col-span-2"} />
+          </div>
+        </>
+      )}
+
+      {/* Performance shortcut */}
       <section className="mt-6">
         <h2 className="mb-3.5 font-display text-[18px] font-bold tracking-tight text-ink">Grow your business</h2>
         <div className="grid gap-3.5 sm:grid-cols-3">
           <GrowthCard icon={Gauge} title="Performance" stat={`${m.completionRate}%`} sub="Job completion rate" to="/analytics" />
-          <GrowthCard icon={Star} title="Reviews" body="Collect Google reviews after every detail and show off your best work to win more bookings." soon />
-          <GrowthCard icon={Sparkles} title="Leads" body="Capture inquiries from your site and turn them into booked details — automatically." soon />
+          <GrowthCard icon={Star} title="Reviews" stat="Collect" sub="Google reviews after each detail" to="/reviews" />
+          <GrowthCard icon={Sparkles} title="Leads" stat="Capture" sub="Turn inquiries into booked jobs" to="/leads" />
         </div>
       </section>
     </div>
@@ -333,6 +571,7 @@ function Widget({
   title,
   subtitle,
   action,
+  icon: Icon,
   className,
   bodyClassName,
   index = 0,
@@ -341,6 +580,7 @@ function Widget({
   title?: string;
   subtitle?: ReactNode;
   action?: ReactNode;
+  icon?: LucideIcon;
   className?: string;
   bodyClassName?: string;
   index?: number;
@@ -354,7 +594,12 @@ function Widget({
       className={cn("surface flex flex-col overflow-hidden rounded-2xl", className)}
     >
       {(title || action) && (
-        <div className="flex items-center gap-3 border-b border-line px-4 py-3">
+        <div className="flex items-center gap-2.5 border-b border-line px-4 py-3">
+          {Icon && (
+            <span className="flex h-8 w-8 flex-none items-center justify-center rounded-xl bg-brand-500/10 text-brand-500">
+              <Icon className="h-4 w-4" />
+            </span>
+          )}
           <div className="min-w-0">
             {title && <h2 className="font-display text-[15px] font-bold tracking-tight text-ink">{title}</h2>}
             {subtitle && <p className="mt-0.5 truncate text-[12px] text-ink3">{subtitle}</p>}
@@ -614,6 +859,242 @@ function Ring({ value, size = 92, stroke = 9 }: { value: number; size?: number; 
   );
 }
 
+// --------------------------------------------------------------------------- premium widgets
+
+const GOAL_HEX: Record<"green" | "blue" | "purple", string> = { green: "#17A867", blue: "#2E7BFF", purple: "#7A5BE0" };
+const kMoney = (n: number) => (n >= 1000 ? `$${(n / 1000).toFixed(1)}k` : `$${Math.round(n)}`);
+const initials = (s: string) => { const p = s.trim().split(/\s+/).filter(Boolean); return (p.length <= 1 ? (p[0] ?? "?").slice(0, 2) : p[0][0] + p[p.length - 1][0]); };
+const ago = (iso: string) => {
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 30) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+};
+
+/** Glassy monthly-goal bar for the hero (renders on the dark photo). */
+function HeroGoal({ label, cur, goal, money: isMoney }: { label: string; cur: number; goal: number; money: boolean }) {
+  const pct = goal > 0 ? Math.min(100, Math.round((cur / goal) * 100)) : 0;
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.06] px-3 py-2 backdrop-blur-md">
+      <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.06em] text-white/55">
+        <span className="truncate">{label}</span>
+        <span className="flex-none text-white/80">{pct}%</span>
+      </div>
+      <div className="mt-1 flex items-baseline gap-1 text-white">
+        <span className="font-display text-[15px] font-bold tnum">{isMoney ? kMoney(cur) : Math.round(cur)}</span>
+        <span className="text-[11px] text-white/45">/ {isMoney ? kMoney(goal) : goal}</span>
+      </div>
+      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/15">
+        <motion.div className="h-full rounded-full bg-gradient-to-r from-brand-300 to-brand-500"
+          initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.9, ease: "easeOut" }} />
+      </div>
+    </div>
+  );
+}
+
+type GoalItem = {
+  key: string; label: string; icon: LucideIcon; cur: number; goal: number; money: boolean;
+  tone: "green" | "blue" | "purple"; remaining: number; projected: number; done: boolean; onTrack: boolean; earlyDays: number;
+};
+
+/** Monthly goals — ring for at-a-glance, plus a progress bar and a forecast line
+ *  (remaining + projected pace / ETA) so each goal tells you where it's headed. */
+function GoalsWidget({ goals }: { goals: GoalItem[] }) {
+  return (
+    <Widget index={0} title="Monthly goals" subtitle="Pace toward a stretch on last month" icon={Target}>
+      <div className="flex flex-col divide-y divide-line2">
+        {goals.map((g) => {
+          const pct = g.goal > 0 ? Math.min(100, Math.round((g.cur / g.goal) * 100)) : 0;
+          const fmt = (n: number) => (g.money ? kMoney(n) : String(Math.round(n)));
+          const cast = g.done
+            ? { icon: CheckCircle2, text: "Goal reached — great month 🎉", cls: "text-success" }
+            : g.onTrack
+              ? { icon: TrendingUp, text: g.earlyDays >= 1 ? `On track — finishing ~${g.earlyDays}d early` : "On pace to hit goal", cls: "text-success" }
+              : { icon: Clock, text: `${fmt(g.remaining)} to go · trending ${fmt(g.projected)}`, cls: "text-ink3" };
+          return (
+            <div key={g.key} className="flex items-center gap-3.5 py-3 first:pt-1 last:pb-1">
+              <GoalRing value={pct} hex={GOAL_HEX[g.tone]} size={50} stroke={6} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="flex items-center gap-1.5 text-[12.5px] font-semibold text-ink"><g.icon className="h-3.5 w-3.5 text-ink3" />{g.label}</span>
+                  <span className="flex-none text-[12px] font-bold tnum text-ink">{fmt(g.cur)}<span className="font-medium text-ink3"> / {fmt(g.goal)}</span></span>
+                </div>
+                <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-line2">
+                  <motion.div className="h-full rounded-full" style={{ backgroundColor: GOAL_HEX[g.tone] }}
+                    initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }} />
+                </div>
+                <div className={cn("mt-1.5 flex items-center gap-1 text-[11px] font-medium", cast.cls)}>
+                  <cast.icon className="h-3 w-3 flex-none" />{cast.text}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Widget>
+  );
+}
+
+function GoalRing({ value, hex, size = 74, stroke = 8 }: { value: number; hex: string; size?: number; stroke?: number }) {
+  const r = (size - stroke) / 2, c = 2 * Math.PI * r, offset = c * (1 - Math.min(100, Math.max(0, value)) / 100);
+  return (
+    <div className="relative flex-none" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgb(var(--line2))" strokeWidth={stroke} />
+        <motion.circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={hex} strokeWidth={stroke} strokeLinecap="round"
+          strokeDasharray={c} initial={{ strokeDashoffset: c }} animate={{ strokeDashoffset: offset }} transition={{ duration: 0.9, ease: "easeOut" }} />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="font-display text-[15px] font-bold tnum text-ink">{value}%</span>
+      </div>
+    </div>
+  );
+}
+
+/** Data-driven business coach — rule-based suggestions, not an LLM. Each tip is
+ *  classified (category + badge) so it reads like advice from an assistant. */
+function BusinessCoach({ items }: { items: { icon: LucideIcon; tone: Accent; category: string; badge: CoachBadge; text: ReactNode }[] }) {
+  return (
+    <Widget index={0} title="Business coach" subtitle="Recommendations from your shop data" icon={Lightbulb}>
+      {items.length === 0 ? (
+        <InlineEmpty
+          icon={<Lightbulb />}
+          title="Coaching is warming up"
+          body="Once you've booked a few jobs and logged some invoices, tailored tips from your shop data land here."
+          action={
+            <Link to="/appointments" className="inline-flex h-[34px] items-center gap-1.5 rounded-lg bg-brand-500/10 px-3 text-[12.5px] font-semibold text-brand-500 transition-colors hover:bg-brand-500/15">
+              <CalendarPlus className="h-4 w-4" />Book a job
+            </Link>
+          }
+        />
+      ) : (
+        <div className="flex flex-col gap-2 pt-0.5">
+          {items.map((it, i) => {
+            const b = BADGE[it.badge];
+            return (
+              <motion.div key={i} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.32, delay: 0.1 + i * 0.06, ease: "easeOut" }}
+                className="flex items-start gap-2.5 rounded-xl bg-panel2/50 px-3 py-2.5 ring-1 ring-inset ring-line/60 transition-colors hover:bg-panel2">
+                <span className={cn("mt-0.5 flex h-7 w-7 flex-none items-center justify-center rounded-lg ring-1 ring-inset", ACCENT_BUBBLE[it.tone])}>
+                  <it.icon className="h-[15px] w-[15px]" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="mb-1 flex items-center gap-2">
+                    <span className={cn("inline-flex items-center rounded-full px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-[0.05em] ring-1 ring-inset", b.cls)}>{b.label}</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-ink3">{it.category}</span>
+                  </div>
+                  <p className="text-[12.5px] leading-relaxed text-ink2">{it.text}</p>
+                </div>
+              </motion.div>
+            );
+          })}
+        </div>
+      )}
+    </Widget>
+  );
+}
+
+type Spotlight = {
+  id: string; name: string; spend: number; lastVisit: string | null; favService: string | null;
+  visits: number; avgTicket: number; vehicle: string | null; dueInDays: number | null;
+  likelihood: "High" | "Medium" | "Low"; upsell: string | null;
+};
+
+const RETURN_PILL: Record<Spotlight["likelihood"], { label: string; cls: string }> = {
+  High:   { label: "Likely to return", cls: "bg-success/12 text-success ring-success/25" },
+  Medium: { label: "Due to rebook",    cls: "bg-warning/12 text-warning ring-warning/25" },
+  Low:    { label: "At risk",          cls: "bg-danger/12 text-danger ring-danger/25" },
+};
+
+/** The shop's most valuable regular, with the insight to act on them right now. */
+function SpotlightWidget({ s }: { s: Spotlight }) {
+  const pill = RETURN_PILL[s.likelihood];
+  const nextVisit = s.dueInDays == null ? "—"
+    : s.dueInDays > 0 ? `~${s.dueInDays}d`
+    : s.dueInDays === 0 ? "due now"
+    : `${-s.dueInDays}d late`;
+  return (
+    <Widget index={0} title="Customer spotlight" subtitle="Your most valuable regular" icon={Crown}>
+      <div className="flex items-center gap-3.5 pt-1">
+        <span className="flex h-14 w-14 flex-none items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-violet text-[17px] font-bold uppercase text-white shadow-glow">{initials(s.name)}</span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="truncate font-display text-[16px] font-bold tracking-tight text-ink">{s.name}</span>
+            <span className="inline-flex flex-none items-center gap-1 rounded-full bg-violet/12 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em] text-violet"><Crown className="h-3 w-3" />VIP</span>
+          </div>
+          <div className="mt-0.5 truncate text-[12px] text-ink3">
+            {s.vehicle ? <>{s.vehicle} · </> : null}{s.visits} visits · last seen {s.lastVisit ? ago(s.lastVisit) : "—"}
+          </div>
+        </div>
+        <Link to={`/customers/${s.id}`} aria-label={`View ${s.name}`} className="flex-none rounded-lg bg-panel2 p-2 text-ink3 ring-1 ring-inset ring-line transition-colors hover:bg-line2 hover:text-ink"><ArrowUpRight className="h-4 w-4" /></Link>
+      </div>
+
+      <div className="mt-3 flex items-center gap-2">
+        <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-[0.04em] ring-1 ring-inset", pill.cls)}>{pill.label}</span>
+        {s.favService && <span className="truncate text-[11.5px] text-ink3">Loves <b className="font-semibold text-ink2">{s.favService}</b></span>}
+      </div>
+
+      <div className="mt-3 grid grid-cols-3 divide-x divide-line rounded-xl bg-panel2/40 py-3 ring-1 ring-inset ring-line/60">
+        <SpotStat label="Lifetime" value={money(Math.round(s.spend))} />
+        <SpotStat label="Avg ticket" value={money(Math.round(s.avgTicket))} />
+        <SpotStat label="Next visit" value={nextVisit} />
+      </div>
+
+      {s.upsell && (
+        <div className="mt-3 flex items-center gap-2 rounded-xl bg-violet/[0.06] px-3 py-2 ring-1 ring-inset ring-violet/15">
+          <Sparkles className="h-3.5 w-3.5 flex-none text-violet" />
+          <span className="truncate text-[11.5px] text-ink2">Suggested upsell: <b className="font-semibold text-ink">{s.upsell}</b></span>
+        </div>
+      )}
+
+      <Link to="/appointments" className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-gradient-to-b from-brand-400 to-brand-600 py-2.5 text-[12.5px] font-semibold text-white shadow-glow transition-[transform,box-shadow,filter] duration-150 hover:-translate-y-0.5 hover:shadow-glow-lg hover:brightness-[1.05] active:scale-[0.98]">
+        <CalendarPlus className="h-4 w-4" />Book their next {s.favService ?? "detail"}
+      </Link>
+    </Widget>
+  );
+}
+function SpotStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="px-2 text-center">
+      <div className="truncate font-display text-[14px] font-bold tnum text-ink">{value}</div>
+      <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.05em] text-ink3">{label}</div>
+    </div>
+  );
+}
+
+/** Live-feeling recent activity feed. */
+function ActivityWidget({ items, className }: { items: { at: string; icon: LucideIcon; tone: Accent; text: ReactNode }[]; className?: string }) {
+  return (
+    <Widget index={0} title="Recent activity" subtitle="What's happened lately" icon={BellRing} className={className}>
+      {items.length === 0 ? (
+        <InlineEmpty
+          icon={<BellRing />}
+          title="Nothing's happened yet"
+          body="As you book jobs, take payments and add customers, the latest activity streams in right here."
+          action={
+            <Link to="/appointments" className="inline-flex h-[34px] items-center gap-1.5 rounded-lg bg-brand-500/10 px-3 text-[12.5px] font-semibold text-brand-500 transition-colors hover:bg-brand-500/15">
+              <CalendarPlus className="h-4 w-4" />Book your first job
+            </Link>
+          }
+        />
+      ) : (
+        <div className="flex flex-col pt-0.5">
+          {items.map((it, i) => (
+            <motion.div key={i} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.08 + i * 0.05, ease: "easeOut" }}
+              className="flex items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-panel2/60">
+              <span className={cn("flex h-7 w-7 flex-none items-center justify-center rounded-lg ring-1 ring-inset", ACCENT_BUBBLE[it.tone])}>
+                <it.icon className="h-3.5 w-3.5" />
+              </span>
+              <p className="min-w-0 flex-1 truncate text-[12.5px] text-ink2">{it.text}</p>
+              <span className="flex-none text-[11px] text-ink3">{ago(it.at)}</span>
+            </motion.div>
+          ))}
+        </div>
+      )}
+    </Widget>
+  );
+}
+
 /** A rich, intentional empty state with a subtle visual and a clear next step. */
 function DashEmpty({
   title,
@@ -760,49 +1241,57 @@ function NeedsAttention({
   overdueCount: number; overdueAmount: number; unsentCount: number;
   lapsedCount: number; unconfirmedToday: number; showMoney: boolean;
 }) {
+  type Tone = "danger" | "warning" | "brand" | "violet";
   const items: {
-    tone: "danger" | "warning" | "brand" | "violet";
-    icon: LucideIcon; title: string; detail: string; to: string; cta: string;
+    tone: Tone; priority: "High" | "Medium"; icon: LucideIcon;
+    title: string; desc: string; to: string; cta: string; noun: string;
   }[] = [];
 
   if (showMoney && overdueCount > 0) {
     items.push({
-      tone: "danger", icon: AlertCircle,
+      tone: "danger", priority: "High", icon: AlertCircle,
       title: `${overdueCount} overdue invoice${overdueCount === 1 ? "" : "s"}`,
-      detail: `${money(overdueAmount)} past due`,
-      to: "/invoices", cta: "Chase payment",
+      desc: `${money(overdueAmount)} is past due — chase it before it ages further.`,
+      to: "/invoices", cta: "Chase payment", noun: "invoices",
     });
   }
   if (unconfirmedToday > 0) {
     items.push({
-      tone: "warning", icon: Clock,
+      tone: "warning", priority: "High", icon: Clock,
       title: `${unconfirmedToday} job${unconfirmedToday === 1 ? "" : "s"} unconfirmed`,
-      detail: "On today's board", to: "/appointments", cta: "Confirm",
+      desc: "Still unconfirmed on today's board — a quick reminder prevents no-shows.",
+      to: "/appointments", cta: "Confirm jobs", noun: "schedule",
     });
   }
   if (showMoney && unsentCount > 0) {
     items.push({
-      tone: "brand", icon: Send,
+      tone: "brand", priority: "Medium", icon: Send,
       title: `${unsentCount} invoice${unsentCount === 1 ? "" : "s"} not sent`,
-      detail: "Customer hasn't been billed", to: "/invoices", cta: "Send",
+      desc: "Completed work that hasn't been billed to the customer yet.",
+      to: "/invoices", cta: "Send invoices", noun: "invoices",
     });
   }
   if (lapsedCount > 0) {
     items.push({
-      tone: "violet", icon: BellRing,
+      tone: "violet", priority: "Medium", icon: BellRing,
       title: `${lapsedCount} client${lapsedCount === 1 ? "" : "s"} gone quiet`,
-      detail: "No visit in 60+ days", to: "/customers", cta: "Win them back",
+      desc: "No visit in 60+ days. A friendly nudge often wins them back.",
+      to: "/customers", cta: "Send reminder", noun: "customers",
     });
   }
 
   if (items.length === 0) return null;
 
-  const TONE = {
-    danger:  { bubble: "bg-danger/12 text-danger",       ring: "ring-danger/20" },
-    warning: { bubble: "bg-warning/12 text-warning",     ring: "ring-warning/20" },
-    brand:   { bubble: "bg-brand-500/12 text-brand-500", ring: "ring-brand-500/20" },
-    violet:  { bubble: "bg-violet/12 text-violet",       ring: "ring-violet/20" },
-  } as const;
+  const TONE: Record<Tone, { bubble: string; ring: string; bar: string; btn: string }> = {
+    danger:  { bubble: "bg-danger/12 text-danger",       ring: "ring-danger/25",    bar: "bg-danger",    btn: "bg-danger text-white" },
+    warning: { bubble: "bg-warning/12 text-warning",     ring: "ring-warning/25",   bar: "bg-warning",   btn: "bg-warning text-white" },
+    brand:   { bubble: "bg-brand-500/12 text-brand-500", ring: "ring-brand-500/25", bar: "bg-brand-500", btn: "bg-brand-500 text-white" },
+    violet:  { bubble: "bg-violet/12 text-violet",       ring: "ring-violet/25",    bar: "bg-violet",    btn: "bg-violet text-white" },
+  };
+  const PRIORITY: Record<"High" | "Medium", string> = {
+    High:   "bg-danger/12 text-danger ring-danger/25",
+    Medium: "bg-warning/12 text-warning ring-warning/25",
+  };
 
   return (
     <div className="mt-5">
@@ -823,26 +1312,30 @@ function NeedsAttention({
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.32, delay: i * 0.05, ease: [0.22, 1, 0.36, 1] }}
+              className={cn("surface relative flex h-full flex-col overflow-hidden rounded-2xl p-3.5 pl-4 ring-1 ring-inset", t.ring)}
             >
-              <Link
-                to={it.to}
-                className={cn(
-                  "surface group flex h-full items-start gap-3 rounded-2xl p-3.5 ring-1 ring-inset transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-lift",
-                  t.ring
-                )}
-              >
-                <span className={cn("flex h-9 w-9 flex-none items-center justify-center rounded-xl transition-transform duration-200 group-hover:scale-105", t.bubble)}>
-                  <it.icon className="h-[18px] w-[18px]" />
+              {/* priority accent rail */}
+              <span aria-hidden className={cn("absolute inset-y-0 left-0 w-1", t.bar)} />
+              <div className="flex items-center gap-2">
+                <span className={cn("flex h-8 w-8 flex-none items-center justify-center rounded-xl", t.bubble)}>
+                  <it.icon className="h-[17px] w-[17px]" />
                 </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13.5px] font-semibold text-ink">{it.title}</span>
-                  <span className="mt-0.5 block truncate text-[11.5px] text-ink3">{it.detail}</span>
-                  <span className="mt-1.5 inline-flex items-center gap-1 text-[11.5px] font-semibold text-brand-500">
-                    {it.cta}
-                    <ArrowRight className="h-3 w-3 transition-transform duration-200 group-hover:translate-x-0.5" />
-                  </span>
+                <span className={cn("ml-auto inline-flex items-center rounded-full px-2 py-0.5 text-[9.5px] font-bold uppercase tracking-[0.05em] ring-1 ring-inset", PRIORITY[it.priority])}>
+                  {it.priority}
                 </span>
-              </Link>
+              </div>
+              <div className="mt-2.5 flex-1">
+                <div className="text-[13.5px] font-bold tracking-tight text-ink">{it.title}</div>
+                <p className="mt-1 text-[11.5px] leading-relaxed text-ink3">{it.desc}</p>
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <Link to={it.to} className={cn("inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg px-3 text-[12px] font-semibold shadow-sm transition-[transform,filter] duration-150 hover:brightness-[1.06] active:scale-[0.98]", t.btn)}>
+                  {it.cta}
+                </Link>
+                <Link to={it.to} className="inline-flex h-8 flex-none items-center rounded-lg px-2.5 text-[12px] font-semibold text-ink3 transition-colors hover:bg-line2 hover:text-ink">
+                  View
+                </Link>
+              </div>
             </motion.div>
           );
         })}

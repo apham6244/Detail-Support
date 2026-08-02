@@ -22,6 +22,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { prefetchRoute } from "@/lib/prefetch";
 import { useAuth } from "@/lib/auth";
 import { useEntitlements } from "@/lib/entitlements";
 import { DSIcon } from "@/components/brand/Logo";
@@ -97,6 +98,9 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { org, user, role } = useAuth();
   const ent = useEntitlements();
   const shopName = org?.name ?? "Detail Support";
+  // The drawer instance (mobile) is the one passed an `onNavigate`; give its
+  // rows more vertical room for comfortable thumb taps.
+  const mobile = Boolean(onNavigate);
 
   return (
     <aside className="relative flex h-full w-[236px] flex-col overflow-hidden bg-sidebar text-[#C4CDE0]">
@@ -140,7 +144,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                 )}
                 <div className="flex flex-col gap-0.5">
                   {group.items.map((item) => (
-                    <NavRow key={item.to} item={item} ent={ent} onNavigate={onNavigate} />
+                    <NavRow key={item.to} item={item} ent={ent} onNavigate={onNavigate} mobile={mobile} />
                   ))}
                 </div>
               </div>
@@ -184,10 +188,12 @@ function NavRow({
   item,
   ent,
   onNavigate,
+  mobile,
 }: {
   item: NavItem;
   ent: ReturnType<typeof useEntitlements>;
   onNavigate?: () => void;
+  mobile?: boolean;
 }) {
   const { to, label, icon: Icon, badge, feature } = item;
   return (
@@ -195,7 +201,13 @@ function NavRow({
       to={to}
       end={to === "/"}
       onClick={onNavigate}
-      className="group relative flex items-center gap-[11px] rounded-[10px] px-3 py-[9px] text-[13.5px] font-medium outline-none transition-colors duration-150 hover:bg-white/[0.045]"
+      onMouseEnter={() => prefetchRoute(to)}
+      onFocus={() => prefetchRoute(to)}
+      onTouchStart={() => prefetchRoute(to)}
+      className={cn(
+        "group relative flex items-center gap-[11px] rounded-[10px] px-3 text-[13.5px] font-medium outline-none transition-colors duration-150 hover:bg-white/[0.045]",
+        mobile ? "py-3" : "py-[9px]"
+      )}
     >
       {({ isActive }) => {
         const locked = Boolean(feature) && ent.ready && !ent.hasFeature(feature!);

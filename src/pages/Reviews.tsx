@@ -7,12 +7,12 @@ import {
   MapPin, MessageSquare, CalendarDays, TrendingUp, AlertCircle, Reply,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { Loading } from "@/components/ui/data";
+import { NoResults, InlineEmpty } from "@/components/ui/data";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 import { useGoogleReviews, type BusinessMatch, type GoogleReview } from "@/hooks/useGoogleReviews";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/cn";
-
-const AXIS = "#7E8AA3";
+import { AXIS } from "@/lib/metrics";
 const tooltipStyle = {
   borderRadius: 10, border: "1px solid rgba(126,138,163,.25)",
   background: "rgb(var(--panel))", color: "rgb(var(--ink))", fontSize: 12,
@@ -67,7 +67,7 @@ export default function Reviews() {
       />
 
       {configured === null ? (
-        <Loading />
+        <PageSkeleton variant="analytics" kpis={4} header={false} />
       ) : configured === false ? (
         <NotConfigured />
       ) : !connected ? (
@@ -221,9 +221,12 @@ function Onboarding({ search, connect, loading, error, canManage }: {
       )}
 
       {touched && !searching && !results.length && query.trim().length >= 2 && !searchError && (
-        <div className="mt-4 border-y border-line px-4 py-10 text-center text-[13px] text-ink3">
-          No businesses found for “{query}”. Try the exact name on your Google listing.
-        </div>
+        <NoResults
+          title="No businesses found"
+          body={`Nothing came back for “${query}”. Try the exact name on your Google listing, or clear the search and try again.`}
+          onClear={() => setQuery("")}
+          clearLabel="Clear search"
+        />
       )}
     </div>
   );
@@ -286,7 +289,7 @@ function Dashboard({ data, loading, error }: {
     return list;
   }, [reviews, query, rating, sort]);
 
-  if (loading && !data) return <Loading />;
+  if (loading && !data) return <PageSkeleton variant="analytics" kpis={4} header={false} />;
   if (error && !data) {
     return (
       <div className="flex items-start gap-2 rounded-xl bg-danger/10 px-4 py-3 text-[13px] text-danger">
@@ -294,7 +297,7 @@ function Dashboard({ data, loading, error }: {
       </div>
     );
   }
-  if (!data) return <Loading />;
+  if (!data) return <PageSkeleton variant="analytics" kpis={4} header={false} />;
 
   return (
     <>
@@ -408,9 +411,24 @@ function Dashboard({ data, loading, error }: {
 
       {/* Reviews */}
       {filtered.length === 0 ? (
-        <div className="mt-6 border-y border-line px-4 py-14 text-center text-[13px] text-ink3">
-          {reviews.length === 0 ? "Google hasn't returned any reviews for this business yet." : "No reviews match your filters."}
-        </div>
+        reviews.length === 0 ? (
+          <div className="surface mt-6 rounded-2xl">
+            <InlineEmpty
+              icon={<MessageSquare />}
+              title="No reviews yet"
+              body="Google hasn't returned any reviews for this business yet. As customers leave ratings, they'll appear here automatically."
+            />
+          </div>
+        ) : (
+          <NoResults
+            title="No reviews match"
+            body="No reviews fit your current search and rating filter. Clear them to read every review."
+            onClear={() => {
+              setQuery("");
+              setRating("all");
+            }}
+          />
+        )
       ) : (
         <div className="mt-5 grid gap-3.5 lg:grid-cols-2">
           {filtered.map((r) => <ReviewCard key={r.id} review={r} />)}

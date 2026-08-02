@@ -27,7 +27,9 @@ export function Modal({
   // overlay position relative to the page box instead of the viewport — which
   // pins it to the top and clips it. The portal escapes that containing block.
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:items-center">
+    // On phones the dialog is a bottom sheet (docked to the thumb zone); on
+    // sm+ it's the centered card. Same component, responsive shell.
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4">
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -36,24 +38,26 @@ export function Modal({
         onClick={onClose}
       />
       <motion.div
-        initial={{ opacity: 0, y: 12, scale: 0.98 }}
+        initial={{ opacity: 0, y: 24, scale: 0.99 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.18 }}
-        className="surface surface-raised relative z-10 my-auto flex max-h-[calc(100dvh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-2xl"
+        transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+        className="surface surface-raised relative z-10 flex max-h-[92dvh] w-full max-w-none flex-col overflow-hidden rounded-t-2xl sm:my-auto sm:max-h-[calc(100dvh-2rem)] sm:max-w-lg sm:rounded-2xl"
       >
+        {/* Grabber — signals the sheet, phones only. */}
+        <div aria-hidden className="mx-auto mt-2 h-1 w-9 flex-none rounded-full bg-line2 sm:hidden" />
         <div className="flex flex-none items-center justify-between border-b border-line px-5 py-4">
           <h3 className="text-[15px] font-semibold">{title}</h3>
           <button
             onClick={onClose}
             aria-label="Close"
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-ink3 transition-[transform,background-color,color] duration-150 ease-out hover:bg-line2 hover:text-ink active:scale-90"
+            className="flex h-10 w-10 items-center justify-center rounded-lg text-ink3 transition-[transform,background-color,color] duration-150 ease-out hover:bg-line2 hover:text-ink active:scale-90 md:h-8 md:w-8"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
         <div className="scrollbar-slim min-h-0 flex-1 overflow-y-auto px-5 py-5">{children}</div>
         {footer && (
-          <div className="flex flex-none justify-end gap-2 border-t border-line px-5 py-3.5">
+          <div className="flex flex-none flex-col gap-2 border-t border-line px-5 py-3.5 pb-[calc(0.875rem+env(safe-area-inset-bottom))] [&>*]:w-full sm:flex-row sm:justify-end sm:pb-3.5 sm:[&>*]:w-auto">
             {footer}
           </div>
         )}

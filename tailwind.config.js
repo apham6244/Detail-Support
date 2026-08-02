@@ -56,8 +56,14 @@ export default {
         display: ["Sora", "Inter", "ui-sans-serif", "system-ui", "sans-serif"],
       },
       borderRadius: {
+        // Signature corner language — a touch softer/rounder than stock so the
+        // whole app shares one recognisable radius rhythm. `2xl` is nudged 16→18
+        // to line up with the many hand-set 18–20px cards; 3xl/4xl are for
+        // premium panels and heroes.
         xl: "12px",
-        "2xl": "16px",
+        "2xl": "18px",
+        "3xl": "22px",
+        "4xl": "28px",
       },
       boxShadow: {
         card: "0 1px 2px rgb(16 22 38 / 0.04), 0 4px 16px rgb(16 22 38 / 0.05)",
@@ -79,6 +85,16 @@ export default {
           "radial-gradient(120% 120% at 15% 0%, rgb(46 123 255 / 0.22) 0%, transparent 45%), radial-gradient(120% 120% at 100% 100%, rgb(122 91 224 / 0.18) 0%, transparent 50%)",
         carbon:
           "linear-gradient(135deg, #0B0F17 0%, #141b29 50%, #0B0F17 100%)",
+        // Signature "showroom light" — a faint blue wash falling from above.
+        // Applied to the app ground so every page shares one lit atmosphere.
+        "brand-aura":
+          "radial-gradient(135% 92% at 50% -18%, rgb(46 123 255 / 0.06) 0%, transparent 52%)",
+        // A diagonal metallic clearcoat sweep for premium/glass elements.
+        "metal-sheen":
+          "linear-gradient(115deg, transparent 28%, rgb(255 255 255 / 0.10) 46%, transparent 64%)",
+        // Soft brushed-metal fill for icon chips / accent tiles.
+        "metal-light": "linear-gradient(135deg, #F1F5FC 0%, #DEE8F6 42%, #F1F5FC 100%)",
+        "metal-dark": "linear-gradient(135deg, #1B2436 0%, #232D42 45%, #141B29 100%)",
       },
       keyframes: {
         "fade-up": {

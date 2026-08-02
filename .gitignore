@@ -6,6 +6,9 @@ dist-ssr
 .env.*
 !.env.example
 
+# Claude Code (per-machine)
+.claude/settings.local.json
+
 # Editor
 .vscode/*
 !.vscode/extensions.json

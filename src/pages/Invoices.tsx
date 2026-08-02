@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { ResponsiveContainer, AreaChart, Area } from "recharts";
 import {
@@ -10,8 +10,11 @@ import {
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { Modal, Field } from "@/components/ui/Modal";
-import { Loading, EmptyState, SignInPrompt, money } from "@/components/ui/data";
+import { EmptyState, NoResults, SignInPrompt, money } from "@/components/ui/data";
+import { confirm, toast } from "@/components/ui/feedback";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 import { CountUp } from "@/components/ui/CountUp";
+import { InvoiceDocument } from "@/components/invoice/InvoiceDocument";
 import { useInvoices, type NewInvoice } from "@/hooks/useInvoices";
 import { useCustomers } from "@/hooks/useCustomers";
 import { useEntitlements } from "@/lib/entitlements";
@@ -89,6 +92,9 @@ export default function Invoices() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<Invoice | null>(null);
+  /** Invoice queued for print-to-PDF, with its line items already resolved. */
+  const [pdf, setPdf] = useState<{ inv: Invoice; items: InvoiceLineItem[] } | null>(null);
+  const [pdfBusy, setPdfBusy] = useState<string | null>(null);
 
   // toolbar
   const [query, setQuery] = useState("");
@@ -144,8 +150,9 @@ export default function Invoices() {
     };
   }, [invoices, months]);
 
+  const deferredQuery = useDeferredValue(query);
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = deferredQuery.trim().toLowerCase();
     const now = Date.now();
     const cutoff =
       range === "30" ? now - 30 * 86_400_000 :
@@ -173,7 +180,7 @@ export default function Invoices() {
         default: return t(b) - t(a);
       }
     });
-  }, [invoices, query, statusFilter, customerFilter, range, sort]);
+  }, [invoices, deferredQuery, statusFilter, customerFilter, range, sort]);
 
   const statusCounts = useMemo(() => {
     const m: Record<string, number> = { all: invoices.length };
@@ -200,6 +207,7 @@ export default function Invoices() {
       };
       await create(input);
       setOpen(false);
+      toast.success("Invoice created");
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -224,6 +232,22 @@ export default function Invoices() {
     });
   };
 
+  /**
+   * Print-to-PDF. Line items live in a separate table and the list view never
+   * loads them, so fetch them first — the document must never print a blank
+   * services table just because the fetch hadn't landed.
+   */
+  const openPdf = async (inv: Invoice) => {
+    setPdfBusy(inv.id);
+    try {
+      setPdf({ inv, items: await getLineItems(inv.id) });
+    } catch {
+      setPdf({ inv, items: [] });
+    } finally {
+      setPdfBusy(null);
+    }
+  };
+
   /** Export the current (filtered) view as CSV. */
   const exportCsv = () => {
     const rows = [
@@ -245,7 +269,7 @@ export default function Invoices() {
     URL.revokeObjectURL(url);
   };
 
-  if (ready && ent.loading) return <Loading />;
+  if (ready && ent.loading) return <PageSkeleton variant="table" kpis={5} />;
   if (ready && !ent.hasFeature("invoices")) {
     return (
       <div className="animate-fade-up">
@@ -280,7 +304,7 @@ export default function Invoices() {
       {!ready ? (
         <SignInPrompt what="invoices" />
       ) : loading ? (
-        <Loading />
+        <PageSkeleton variant="table" kpis={5} header={false} />
       ) : invoices.length === 0 ? (
         <EmptyState
           art="receipt"
@@ -353,11 +377,40 @@ export default function Invoices() {
 
           {/* Table */}
           {filtered.length === 0 ? (
-            <div className="mt-6 rounded-2xl border border-line px-4 py-14 text-center text-[13px] text-ink3">
-              No invoices match your filters.
-            </div>
+            <NoResults
+              title="No invoices match"
+              body="Nothing lines up with your current search and filters. Widen the range or clear them to see every invoice."
+              onClear={() => {
+                setQuery("");
+                setStatusFilter("all");
+                setCustomerFilter("all");
+                setRange("all");
+              }}
+            />
           ) : (
-            <div className="surface mt-5 overflow-hidden rounded-[18px]">
+            <>
+              {/* Mobile: card list — a full data table scrolls sideways on a phone */}
+              <div className="mt-5 flex flex-col gap-3 md:hidden">
+                {filtered.map((inv, i) => (
+                  <InvoiceCard
+                    key={inv.id} inv={inv} index={i}
+                    onOpen={() => setPreview(inv)}
+                    onStatus={(s) => setStatus(inv.id, s)}
+                    onSend={() => markSent(inv.id)}
+                    onPdf={() => openPdf(inv)}
+                    pdfBusy={pdfBusy === inv.id}
+                    onDuplicate={() => duplicate(inv)}
+                    onDelete={async () => {
+                      if (await confirm({ title: `Delete invoice ${inv.number ?? ""}?`.trim(), body: "This permanently removes the invoice and its line items.", confirmLabel: "Delete invoice", tone: "danger" })) {
+                        try { await remove(inv.id); toast.success("Invoice deleted"); } catch (e) { toast.error((e as Error).message); }
+                      }
+                    }}
+                  />
+                ))}
+              </div>
+
+              {/* Tablet & desktop: full table */}
+              <div className="surface mt-5 hidden overflow-hidden rounded-[18px] md:block">
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[860px] border-collapse">
                   <thead>
@@ -377,14 +430,21 @@ export default function Invoices() {
                         onOpen={() => setPreview(inv)}
                         onStatus={(s) => setStatus(inv.id, s)}
                         onSend={() => markSent(inv.id)}
+                        onPdf={() => openPdf(inv)}
+                        pdfBusy={pdfBusy === inv.id}
                         onDuplicate={() => duplicate(inv)}
-                        onDelete={() => { if (window.confirm(`Delete ${inv.number ?? "this invoice"}?`)) remove(inv.id); }}
+                        onDelete={async () => {
+                          if (await confirm({ title: `Delete invoice ${inv.number ?? ""}?`.trim(), body: "This permanently removes the invoice and its line items.", confirmLabel: "Delete invoice", tone: "danger" })) {
+                            try { await remove(inv.id); toast.success("Invoice deleted"); } catch (e) { toast.error((e as Error).message); }
+                          }
+                        }}
                       />
                     ))}
                   </tbody>
                 </table>
               </div>
             </div>
+            </>
           )}
         </>
       )}
@@ -396,7 +456,13 @@ export default function Invoices() {
           onClose={() => setPreview(null)}
           onStatus={(s) => setStatus(preview.id, s)}
           onSend={() => markSent(preview.id)}
+          onPdf={() => openPdf(preview)}
         />
+      )}
+
+      {/* Print document — mounts, prints, then unmounts itself. */}
+      {pdf && (
+        <InvoiceDocument invoice={pdf.inv} items={pdf.items} onDone={() => setPdf(null)} />
       )}
 
       {/* New invoice — unchanged behaviour */}
@@ -552,9 +618,10 @@ function StatusBadge({ inv }: { inv: Invoice }) {
   );
 }
 
-function InvoiceRow({ inv, index, onOpen, onStatus, onSend, onDuplicate, onDelete }: {
+function InvoiceRow({ inv, index, onOpen, onStatus, onSend, onPdf, pdfBusy, onDuplicate, onDelete }: {
   inv: Invoice; index: number; onOpen: () => void;
   onStatus: (s: InvoiceStatus) => void; onSend: () => void;
+  onPdf: () => void; pdfBusy: boolean;
   onDuplicate: () => void; onDelete: () => void;
 }) {
   const [menu, setMenu] = useState(false);
@@ -639,6 +706,7 @@ function InvoiceRow({ inv, index, onOpen, onStatus, onSend, onDuplicate, onDelet
               className="surface surface-raised absolute right-0 top-9 z-30 w-52 overflow-hidden rounded-xl py-1 text-left"
             >
               <MenuItem icon={Eye} onClick={onOpen}>View invoice</MenuItem>
+              <MenuItem icon={pdfBusy ? Loader2 : Printer} spin={pdfBusy} onClick={onPdf}>Download PDF</MenuItem>
               {!inv.sent_at && <MenuItem icon={Send} onClick={onSend}>Mark as sent</MenuItem>}
               {inv.status !== "paid" && <MenuItem icon={CheckCircle2} onClick={() => onStatus("paid")}>Mark as paid</MenuItem>}
               {inv.status === "paid" && <MenuItem icon={Wallet} onClick={() => onStatus("unpaid")}>Mark as unpaid</MenuItem>}
@@ -653,8 +721,77 @@ function InvoiceRow({ inv, index, onOpen, onStatus, onSend, onDuplicate, onDelet
   );
 }
 
-function MenuItem({ icon: Icon, children, onClick, danger }: {
-  icon: LucideIcon; children: React.ReactNode; onClick: () => void; danger?: boolean;
+/** Mobile equivalent of InvoiceRow — same data + actions, laid out as a card. */
+function InvoiceCard({ inv, index, onOpen, onStatus, onSend, onPdf, pdfBusy, onDuplicate, onDelete }: {
+  inv: Invoice; index: number; onOpen: () => void;
+  onStatus: (s: InvoiceStatus) => void; onSend: () => void;
+  onPdf: () => void; pdfBusy: boolean;
+  onDuplicate: () => void; onDelete: () => void;
+}) {
+  const [menu, setMenu] = useState(false);
+  const balance = balanceOf(inv);
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(false);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [menu]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.28, delay: Math.min(index, 10) * 0.03 }}
+      role="button" tabIndex={0} onClick={onOpen}
+      onKeyDown={(e) => { if (e.key === "Enter") onOpen(); }}
+      className="cv-card surface relative cursor-pointer rounded-2xl p-4 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand-500/40"
+    >
+      <div className="flex items-start gap-3">
+        <span className="flex h-9 w-9 flex-none items-center justify-center rounded-xl bg-brand-500/10 text-brand-500"><Receipt className="h-4 w-4" /></span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="truncate font-display text-[15px] font-bold tracking-tight text-ink">{inv.number ?? "—"}</div>
+              <div className="mt-0.5 truncate text-[12.5px] font-medium text-ink2">{inv.customer?.name ?? "—"}</div>
+            </div>
+            <div className="flex-none text-right">
+              <div className="font-display text-[16px] font-bold leading-none tnum text-success">{money(inv.total)}</div>
+              <div className="mt-1 text-[11px] text-ink3">{balance > 0.005 ? `${money(balance)} due` : "paid in full"}</div>
+            </div>
+          </div>
+        </div>
+        <div className="relative flex-none" onClick={(e) => e.stopPropagation()}>
+          <button onClick={(e) => { e.stopPropagation(); setMenu((m) => !m); }} aria-label="Invoice actions"
+            className={cn("flex h-9 w-9 items-center justify-center rounded-lg text-ink3 transition-colors hover:bg-line2 hover:text-ink", menu && "bg-line2 text-ink")}>
+            <MoreHorizontal className="h-4 w-4" />
+          </button>
+          {menu && (
+            <motion.div initial={{ opacity: 0, y: -4, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.14 }}
+              className="surface surface-raised absolute right-0 top-10 z-30 w-52 overflow-hidden rounded-xl py-1 text-left">
+              <MenuItem icon={Eye} onClick={onOpen}>View invoice</MenuItem>
+              <MenuItem icon={pdfBusy ? Loader2 : Printer} spin={pdfBusy} onClick={onPdf}>Download PDF</MenuItem>
+              {!inv.sent_at && <MenuItem icon={Send} onClick={onSend}>Mark as sent</MenuItem>}
+              {inv.status !== "paid" && <MenuItem icon={CheckCircle2} onClick={() => onStatus("paid")}>Mark as paid</MenuItem>}
+              {inv.status === "paid" && <MenuItem icon={Wallet} onClick={() => onStatus("unpaid")}>Mark as unpaid</MenuItem>}
+              <MenuItem icon={Copy} onClick={onDuplicate}>Duplicate</MenuItem>
+              <div className="my-1 h-px bg-line" />
+              <MenuItem icon={Trash2} danger onClick={onDelete}>Delete</MenuItem>
+            </motion.div>
+          )}
+        </div>
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-2 border-t border-line2 pt-3">
+        <div className="flex flex-col gap-0.5 text-[11.5px] text-ink3">
+          <span className="flex items-center gap-1"><CalendarDays className="h-3 w-3" />Issued {fmtShort(inv.issued_at)}</span>
+          {inv.due_at && <span className={cn("flex items-center gap-1", isOverdue(inv) && "font-semibold text-danger")}><Clock className="h-3 w-3" />Due {fmtShort(inv.due_at)}</span>}
+        </div>
+        <StatusBadge inv={inv} />
+      </div>
+    </motion.div>
+  );
+}
+
+function MenuItem({ icon: Icon, children, onClick, danger, spin }: {
+  icon: LucideIcon; children: React.ReactNode; onClick: () => void; danger?: boolean; spin?: boolean;
 }) {
   return (
     <button
@@ -664,7 +801,7 @@ function MenuItem({ icon: Icon, children, onClick, danger }: {
         danger ? "text-danger hover:bg-danger/10" : "text-ink2 hover:bg-line2 hover:text-ink"
       )}
     >
-      <Icon className="h-4 w-4 flex-none" />
+      <Icon className={cn("h-4 w-4 flex-none", spin && "animate-spin")} />
       {children}
     </button>
   );
@@ -674,12 +811,13 @@ function MenuItem({ icon: Icon, children, onClick, danger }: {
 // Invoice preview
 // ---------------------------------------------------------------------------
 
-function InvoicePreview({ inv, getLineItems, onClose, onStatus, onSend }: {
+function InvoicePreview({ inv, getLineItems, onClose, onStatus, onSend, onPdf }: {
   inv: Invoice;
   getLineItems: (id: string) => Promise<InvoiceLineItem[]>;
   onClose: () => void;
   onStatus: (s: InvoiceStatus) => void;
   onSend: () => void;
+  onPdf: () => void;
 }) {
   const [items, setItems] = useState<InvoiceLineItem[] | null>(null);
 
@@ -706,8 +844,10 @@ function InvoicePreview({ inv, getLineItems, onClose, onStatus, onSend }: {
       title={`Invoice ${inv.number ?? ""}`}
       footer={
         <>
-          <Button onClick={() => window.print()}>
-            <span className="inline-flex items-center gap-1.5"><Printer className="h-4 w-4" /> Print / PDF</span>
+          {/* Was a bare window.print(), which printed the whole app shell.
+              Now routes through the dedicated print document. */}
+          <Button onClick={onPdf}>
+            <span className="inline-flex items-center gap-1.5"><Printer className="h-4 w-4" /> Download PDF</span>
           </Button>
           {!inv.sent_at && <Button onClick={onSend}><span className="inline-flex items-center gap-1.5"><Send className="h-4 w-4" /> Mark sent</span></Button>}
           {inv.status !== "paid" && (

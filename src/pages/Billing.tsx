@@ -14,7 +14,8 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { Loading, SignInPrompt, EmptyState } from "@/components/ui/data";
+import { SignInPrompt, EmptyState } from "@/components/ui/data";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 import { useAuth } from "@/lib/auth";
 import { useEntitlements, type PlanInfo } from "@/lib/entitlements";
 import { useBilling } from "@/hooks/useBilling";
@@ -109,7 +110,7 @@ export default function Billing() {
     );
   }
 
-  if (ent.loading || !ent.ready) return ent.loading ? <Loading /> : <SignInPrompt what="billing" />;
+  if (ent.loading || !ent.ready) return ent.loading ? <PageSkeleton variant="plain" /> : <SignInPrompt what="billing" />;
 
   const current = ent.planInfo(ent.subscriptionPlan);
   const currentIndex = ent.catalog.findIndex((p) => p.plan === ent.subscriptionPlan);

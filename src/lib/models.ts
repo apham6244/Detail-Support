@@ -7,6 +7,9 @@ export interface Customer {
   phone: string | null;
   address: string | null;
   notes: string | null;
+  // How this customer found the shop. Optional: the column ships in migration
+  // 027, so on un-migrated databases `select("*")` simply omits it (undefined).
+  referral_source?: string | null;
   created_at: string;
 }
 

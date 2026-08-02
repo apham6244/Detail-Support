@@ -1,4 +1,5 @@
-import { useId, useMemo } from "react";
+import { useMemo } from "react";
+import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis,
@@ -7,11 +8,14 @@ import {
 import {
   TrendingUp, TrendingDown, DollarSign, CheckCircle2, Repeat, Sparkles,
   Trophy, Flame, CalendarDays, Clock, Target, Wrench, Users, ArrowUpRight,
+  CalendarPlus,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { Loading, SignInPrompt, EmptyState, money } from "@/components/ui/data";
-import { EmptyArt } from "@/components/ui/EmptyArt";
+import { SignInPrompt, EmptyState, InlineEmpty, money } from "@/components/ui/data";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 import { CountUp } from "@/components/ui/CountUp";
+import { Panel, Delta, ChartTip, KpiCard, MiniEmpty } from "@/components/ui/metric";
+import { AXIS, TONE, lastMonths, monthKey, collected, pctDelta, type Tone, type Point } from "@/lib/metrics";
 import { useAuth } from "@/lib/auth";
 import { useEntitlements } from "@/lib/entitlements";
 import { FeatureLocked } from "@/components/UpgradeGate";
@@ -21,7 +25,6 @@ import { useInvoices } from "@/hooks/useInvoices";
 import { APPOINTMENT_STATUS_LABEL, type AppointmentStatus } from "@/lib/models";
 import { cn } from "@/lib/cn";
 
-const AXIS = "#7E8AA3";
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 const STATUS_COLOR: Record<AppointmentStatus, string> = {
@@ -31,44 +34,6 @@ const STATUS_COLOR: Record<AppointmentStatus, string> = {
   in_progress: "#E08A00",
   cancelled: "#8A94A6",
   no_show: "#E5484D",
-};
-
-/** Each headline metric owns a colour, used for its icon, sparkline and glow. */
-type Tone = "green" | "blue" | "purple" | "orange";
-const TONE: Record<Tone, { hex: string; text: string; bubble: string; glow: string }> = {
-  green:  { hex: "#17A867", text: "text-success",   bubble: "bg-success/12 text-success",     glow: "bg-success/20" },
-  blue:   { hex: "#2E7BFF", text: "text-brand-500", bubble: "bg-brand-500/12 text-brand-500", glow: "bg-brand-500/20" },
-  purple: { hex: "#7A5BE0", text: "text-violet",    bubble: "bg-violet/12 text-violet",       glow: "bg-violet/20" },
-  orange: { hex: "#E08A00", text: "text-warning",   bubble: "bg-warning/12 text-warning",     glow: "bg-warning/20" },
-};
-
-function lastMonths(n: number) {
-  const now = new Date();
-  const out: { key: string; label: string }[] = [];
-  for (let i = n - 1; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    out.push({
-      key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`,
-      label: d.toLocaleDateString(undefined, { month: "short" }),
-    });
-  }
-  return out;
-}
-const monthKey = (iso: string) => {
-  const d = new Date(iso);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-};
-
-/** Money actually collected on an invoice (paid → total, deposit → deposit). */
-const collected = (inv: { status: string; total: number; deposit_amount: number }) =>
-  inv.status === "paid" ? inv.total : inv.status === "deposit_paid" ? inv.deposit_amount : 0;
-
-type Point = { label: string; value: number };
-const pctDelta = (s: Point[]) => {
-  const cur = s[s.length - 1]?.value ?? 0;
-  const prev = s[s.length - 2]?.value ?? 0;
-  if (prev > 0) return ((cur - prev) / prev) * 100;
-  return cur > 0 ? 100 : 0;
 };
 
 export default function Analytics() {
@@ -251,7 +216,7 @@ export default function Analytics() {
       </div>
     );
   }
-  if (ent.loading) return <Loading />;
+  if (ent.loading) return <PageSkeleton variant="analytics" kpis={4} />;
   if (!ent.hasFeature("analytics")) {
     return (
       <div className="animate-fade-up">
@@ -261,7 +226,7 @@ export default function Analytics() {
       </div>
     );
   }
-  if (cL && aL && iL && !customers.length && !appointments.length && !invoices.length) return <Loading />;
+  if (cL && aL && iL && !customers.length && !appointments.length && !invoices.length) return <PageSkeleton variant="analytics" kpis={4} />;
 
   const hasAppts = appointments.length > 0;
   const revDelta = pctDelta(d.revenueSeries);
@@ -273,17 +238,17 @@ export default function Analytics() {
       {/* ---- Headline metrics ------------------------------------------- */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard index={0} tone="green" icon={DollarSign} label="Revenue this month"
-          value={d.thisMonthRev} format={money} delta={revDelta} deltaLabel="vs last month"
+          value={d.thisMonthRev} format={money} delta={revDelta} sub="vs last month"
           series={d.revenueSeries} />
         <KpiCard index={1} tone="blue" icon={CheckCircle2} label="Completion rate"
           value={d.completionRate} format={(n) => `${Math.round(n)}%`} delta={pctDelta(d.completionSeries)}
-          deltaLabel={`${d.done} completed`} series={d.completionSeries} />
+          sub={`${d.done} completed`} series={d.completionSeries} />
         <KpiCard index={2} tone="purple" icon={Repeat} label="Repeat customers"
           value={d.repeatCount} format={(n) => String(Math.round(n))} delta={pctDelta(d.repeatSeries)}
-          deltaLabel={`${Math.round(d.repeatRate)}% of clients`} series={d.repeatSeries} />
+          sub={`${Math.round(d.repeatRate)}% of clients`} series={d.repeatSeries} />
         <KpiCard index={3} tone="orange" icon={Sparkles} label="Average ticket"
           value={d.avgTicket} format={money} delta={pctDelta(d.ticketSeries)}
-          deltaLabel={`${money(d.totalCollected)} collected`} series={d.ticketSeries} />
+          sub={`${money(d.totalCollected)} collected`} series={d.ticketSeries} />
       </div>
 
       {/* ---- Revenue trend + AI insights -------------------------------- */}
@@ -407,103 +372,6 @@ export default function Analytics() {
 // ---------------------------------------------------------------------------
 
 /** A premium card shell: gloss sheen, soft shadow, generous radius. */
-function Panel({ title, subtitle, badge, icon: Icon, className, children }: {
-  title: string; subtitle?: string; badge?: React.ReactNode;
-  icon?: typeof Sparkles; className?: string; children: React.ReactNode;
-}) {
-  return (
-    <motion.section
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-      className={cn("surface relative overflow-hidden rounded-[20px]", className)}
-    >
-      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-paint-gloss opacity-30" />
-      <div className="relative p-5 sm:p-6">
-        <div className="mb-4 flex items-start gap-2.5">
-          {Icon && (
-            <span className="flex h-8 w-8 flex-none items-center justify-center rounded-xl bg-brand-500/10 text-brand-500">
-              <Icon className="h-4 w-4" />
-            </span>
-          )}
-          <div className="min-w-0">
-            <h2 className="font-display text-[16.5px] font-bold tracking-tight text-ink">{title}</h2>
-            {subtitle && <p className="mt-0.5 text-[12.5px] text-ink3">{subtitle}</p>}
-          </div>
-          {badge && <div className="ml-auto flex-none">{badge}</div>}
-        </div>
-        {children}
-      </div>
-    </motion.section>
-  );
-}
-
-function KpiCard({ index, tone, icon: Icon, label, value, format, delta, deltaLabel, series }: {
-  index: number; tone: Tone; icon: typeof DollarSign; label: string;
-  value: number; format: (n: number) => string;
-  delta: number; deltaLabel: string; series: Point[];
-}) {
-  const t = TONE[tone];
-  const gid = useId().replace(/:/g, "");
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.42, delay: index * 0.06, ease: [0.22, 1, 0.36, 1] }}
-      className="surface group relative overflow-hidden rounded-[20px] p-5 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-1 hover:shadow-lift"
-    >
-      {/* tinted corner glow + gloss sheen — the automotive touch */}
-      <div aria-hidden className={cn("pointer-events-none absolute -right-10 -top-12 h-32 w-32 rounded-full blur-3xl transition-opacity duration-300 group-hover:opacity-90", t.glow, "opacity-60")} />
-      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-20 bg-paint-gloss opacity-40" />
-
-      <div className="relative">
-        <div className="flex items-center gap-2.5">
-          <span className={cn("flex h-9 w-9 flex-none items-center justify-center rounded-xl transition-transform duration-200 group-hover:scale-105", t.bubble)}>
-            <Icon className="h-[18px] w-[18px]" />
-          </span>
-          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink3">{label}</span>
-        </div>
-
-        <CountUp value={value} format={format}
-          className="mt-3.5 block font-display text-[30px] font-bold leading-none tracking-[-0.02em] tnum text-ink" />
-
-        <div className="mt-2.5 flex items-center gap-2">
-          <Delta value={delta} />
-          <span className="truncate text-[11.5px] text-ink3">{deltaLabel}</span>
-        </div>
-
-        <div className="-mx-1 mt-3 h-[46px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={series} margin={{ top: 4, bottom: 0, left: 0, right: 0 }}>
-              <defs>
-                <linearGradient id={`sp${gid}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={t.hex} stopOpacity={0.35} />
-                  <stop offset="100%" stopColor={t.hex} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <Area type="monotone" dataKey="value" stroke={t.hex} strokeWidth={2}
-                fill={`url(#sp${gid})`} dot={false} animationDuration={900} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-function Delta({ value }: { value: number }) {
-  const up = value >= 0;
-  return (
-    <span className={cn(
-      "inline-flex flex-none items-center gap-1 rounded-full px-2 py-0.5 text-[11.5px] font-bold tnum ring-1 ring-inset",
-      up ? "bg-success/12 text-success ring-success/25" : "bg-danger/12 text-danger ring-danger/25"
-    )}>
-      {up ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-      {up ? "+" : "−"}{Math.abs(Math.round(value))}%
-    </span>
-  );
-}
-
 function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
   return (
     <span className={cn("inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold", TONE[tone].bubble)}>
@@ -513,22 +381,6 @@ function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
 }
 
 /** Premium tooltip shared by every chart. */
-function ChartTip({ active, payload, label, format }: any) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="surface surface-raised rounded-xl px-3 py-2 shadow-lift">
-      {label && <div className="text-[11.5px] font-semibold text-ink">{label}</div>}
-      {payload.map((p: any, i: number) => (
-        <div key={i} className="mt-1 flex items-center gap-2 text-[12px] text-ink2">
-          <span className="h-2 w-2 flex-none rounded-full" style={{ background: p.color ?? p.stroke ?? p.payload?.color }} />
-          <span className="text-ink3">{p.name}</span>
-          <b className="ml-auto tnum text-ink">{format ? format(p.value) : p.value}</b>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function ServiceRow({ rank, service, max, total, isTopEarner }: {
   rank: number; service: { name: string; count: number; revenue: number };
   max: number; total: number; isTopEarner: boolean;
@@ -603,9 +455,16 @@ function InsightsCard({ insights }: { insights: { icon: typeof Sparkles; tone: T
         </div>
 
         {insights.length === 0 ? (
-          <div className="py-8 text-center text-[13px] text-ink3">
-            Insights appear once you've booked a few jobs and logged some invoices.
-          </div>
+          <InlineEmpty
+            icon={<Sparkles />}
+            title="Insights are on the way"
+            body="Book a few jobs and log some invoices, and clear takeaways about your revenue and customers will appear here automatically."
+            action={
+              <Link to="/appointments" className="inline-flex h-[34px] items-center gap-1.5 rounded-lg bg-brand-500/10 px-3 text-[12.5px] font-semibold text-brand-500 transition-colors hover:bg-brand-500/15">
+                <CalendarPlus className="h-4 w-4" />Book a job
+              </Link>
+            }
+          />
         ) : (
           <div className="flex flex-col gap-2">
             {insights.map((ins, i) => {
@@ -635,14 +494,5 @@ function InsightsCard({ insights }: { insights: { icon: typeof Sparkles; tone: T
         </div>
       </div>
     </motion.section>
-  );
-}
-
-function MiniEmpty({ text }: { text: string }) {
-  return (
-    <div className="flex h-[200px] flex-col items-center justify-center gap-1 text-center">
-      <EmptyArt variant="chart" className="w-[140px]" />
-      <div className="text-[13px] text-ink3">{text}</div>
-    </div>
   );
 }
