@@ -1,6 +1,6 @@
 import { type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { Loader2 } from "lucide-react";
+import { Loader2, SearchX, RotateCcw } from "lucide-react";
 import { Card } from "./Card";
 import { EmptyArt, type EmptyArtVariant } from "./EmptyArt";
 
@@ -40,7 +40,7 @@ export function IconBtn({
       aria-label={label}
       title={label}
       disabled={disabled}
-      className={`flex h-8 w-8 items-center justify-center rounded-lg text-ink3 transition-[transform,background-color,color] duration-150 ease-out active:scale-90 disabled:opacity-40 disabled:pointer-events-none ${
+      className={`flex h-10 w-10 items-center justify-center rounded-lg text-ink3 transition-[transform,background-color,color] duration-150 ease-out active:scale-90 disabled:opacity-40 disabled:pointer-events-none md:h-8 md:w-8 ${
         danger ? "hover:bg-danger/10 hover:text-danger" : "hover:bg-line2 hover:text-ink"
       }`}
     >
@@ -97,6 +97,77 @@ export function EmptyState({
       </div>
       {action}
     </Card>
+  );
+}
+
+/**
+ * Filtered / searched but nothing matched. Deliberately distinct from
+ * `EmptyState`: the data *exists*, it's just hidden by a query or filter — so
+ * the encouraging next move is "clear it and look again," never "add your
+ * first…". A dashed frame signals "transient," and the Clear button is the one
+ * clear action.
+ */
+export function NoResults({
+  title = "No matches",
+  body,
+  onClear,
+  clearLabel = "Clear filters",
+}: {
+  title?: string;
+  body: string;
+  onClear?: () => void;
+  clearLabel?: string;
+}) {
+  return (
+    <div className="mt-6 flex flex-col items-center gap-3 rounded-2xl border border-dashed border-line px-6 py-12 text-center">
+      <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-line2 text-ink3">
+        <SearchX className="h-[22px] w-[22px]" />
+      </span>
+      <div>
+        <div className="font-display text-[14.5px] font-bold tracking-tight text-ink">{title}</div>
+        <div className="mx-auto mt-1 max-w-xs text-[12.5px] leading-relaxed text-ink3">{body}</div>
+      </div>
+      {onClear && (
+        <button
+          onClick={onClear}
+          className="inline-flex h-[34px] items-center gap-1.5 rounded-lg border border-line bg-panel px-3 text-[12.5px] font-semibold text-ink2 transition-[transform,color,border-color] duration-150 ease-out hover:border-ink3/50 hover:text-ink active:scale-[0.97]"
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+          {clearLabel}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A compact "no data yet" state for a single widget/panel (not a whole page).
+ * Warm gradient icon bubble + one encouraging line + optional inline action, so
+ * a panel waiting for its first data point still feels alive, not unfinished.
+ */
+export function InlineEmpty({
+  icon,
+  title,
+  body,
+  action,
+}: {
+  icon: ReactNode;
+  title: string;
+  body: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-8 text-center">
+      <span className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500/15 to-violet/15 text-brand-500">
+        <span aria-hidden className="absolute inset-0 rounded-2xl bg-paint-gloss opacity-40" />
+        <span className="relative [&>svg]:h-[22px] [&>svg]:w-[22px]">{icon}</span>
+      </span>
+      <div>
+        <div className="font-display text-[14px] font-bold tracking-tight text-ink">{title}</div>
+        <div className="mx-auto mt-1 max-w-[17rem] text-[12.5px] leading-relaxed text-ink3">{body}</div>
+      </div>
+      {action}
+    </div>
   );
 }
 

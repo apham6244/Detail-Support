@@ -70,9 +70,10 @@ export function useServices() {
   const remove = async (id: string) => {
     demoGuard();
     if (!supabase) throw new Error("Not available.");
+    const prev = services; // snapshot for rollback
+    setServices((s) => s.filter((x) => x.id !== id)); // optimistic
     const { error } = await supabase.from("services").delete().eq("id", id);
-    if (error) throw new Error(error.message);
-    setServices((s) => s.filter((x) => x.id !== id));
+    if (error) { setServices(prev); throw new Error(error.message); }
   };
 
   return { services, loading, ready: Boolean(org), reload: load, create, update, remove };

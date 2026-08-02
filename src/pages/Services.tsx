@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Plus, Pencil, Trash2, Clock, Search, Wrench, Armchair, Droplets, Disc3,
@@ -8,7 +8,9 @@ import {
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { Modal, Field } from "@/components/ui/Modal";
-import { Loading, EmptyState, SignInPrompt, money } from "@/components/ui/data";
+import { EmptyState, NoResults, SignInPrompt, money } from "@/components/ui/data";
+import { confirm, toast } from "@/components/ui/feedback";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 import { CountUp } from "@/components/ui/CountUp";
 import { useServices, type ServiceInput } from "@/hooks/useServices";
 import { useAppointments } from "@/hooks/useAppointments";
@@ -99,15 +101,16 @@ export default function Services() {
 
   const archivedCount = services.filter((s) => s.active === false).length;
 
+  const deferredQuery = useDeferredValue(query);
   const visible = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = deferredQuery.trim().toLowerCase();
     return services.filter((s) => {
       if (!showArchived && s.active === false) return false;
       if (catFilter !== "all" && categoryMeta(s.category).label !== catFilter) return false;
       if (q && !`${s.name} ${s.category ?? ""} ${s.description ?? ""}`.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [services, query, catFilter, showArchived]);
+  }, [services, deferredQuery, catFilter, showArchived]);
 
   /** Group the visible services under their category, in a sensible order. */
   const groups = useMemo(() => {
@@ -151,6 +154,7 @@ export default function Services() {
       if (editing) await update(editing.id, form);
       else await create(form);
       setOpen(false);
+      toast.success(editing ? "Service updated" : "Service added");
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -178,7 +182,7 @@ export default function Services() {
       {!ready ? (
         <SignInPrompt what="service catalog" />
       ) : loading ? (
-        <Loading label="Loading your menu" />
+        <PageSkeleton variant="cards" kpis={4} header={false} />
       ) : services.length === 0 ? (
         <EmptyState
           art="spray"
@@ -233,9 +237,14 @@ export default function Services() {
 
           {/* Grouped cards */}
           {visible.length === 0 ? (
-            <div className="mt-6 rounded-2xl border border-line px-4 py-14 text-center text-[13px] text-ink3">
-              No services match your search.
-            </div>
+            <NoResults
+              title="No services match"
+              body="Nothing fits your current search and category. Clear them to see everything on your menu."
+              onClear={() => {
+                setQuery("");
+                setCatFilter("all");
+              }}
+            />
           ) : (
             <div className="mt-6 flex flex-col gap-8">
               {groups.map((g) => (
@@ -258,7 +267,11 @@ export default function Services() {
                         onEdit={() => openEdit(s)}
                         onDuplicate={() => duplicate(s)}
                         onArchive={() => toggleArchive(s)}
-                        onDelete={() => { if (window.confirm(`Delete “${s.name}”?`)) remove(s.id); }}
+                        onDelete={async () => {
+                          if (await confirm({ title: `Delete “${s.name}”?`, body: "This service is removed from your menu. Past jobs that used it are unaffected.", confirmLabel: "Delete service", tone: "danger" })) {
+                            try { await remove(s.id); toast.success("Service deleted"); } catch (e) { toast.error((e as Error).message); }
+                          }
+                        }}
                       />
                     ))}
                   </div>

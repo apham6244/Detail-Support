@@ -70,6 +70,40 @@ export const DEMO_USER = { id: "demo-user", email: "demo@detailsupport.app" };
 export const DEMO_PROFILE = { full_name: "Alex Rivera", business_name: "Apex Auto Detailing" };
 export const DEMO_ROLE = "owner";
 
+// A fully-populated workspace so the Settings control center renders in demo
+// (the demo org isn't in the DB, so useWorkspace can't load it). Writes stay
+// in-memory in demo — nothing here touches Supabase.
+export const DEMO_WORKSPACE = {
+  id: DEMO_ORG.id,
+  name: DEMO_ORG.name,
+  plan: DEMO_ORG.plan,
+  trial_ends_at: null,
+  settings: {
+    owner_name: DEMO_PROFILE.full_name,
+    phone: "(214) 555-0100",
+    business_email: "hello@apexautodetailing.example",
+    location: "Plano, TX",
+    tagline: "Showroom shine, every time.",
+    tax_enabled: true,
+    tax_label: "Sales tax",
+    tax_rate: 8.25,
+    notif_new_booking: true,
+    notif_reminders: true,
+    notif_review_requests: true,
+    notif_payment: true,
+    notif_sms: false,
+    ai_recommendations: true,
+    ai_business_coach: true,
+    pay_deposit_pct: 25,
+    pay_terms_days: 7,
+    pay_footer: "Thank you for your business!",
+    cal_default_duration: 120,
+    cal_week_start: "sun" as const,
+    cal_open: "08:00",
+    cal_close: "18:00",
+  },
+};
+
 // ---------------------------------------------------------------------------
 // Sample data
 // ---------------------------------------------------------------------------
@@ -105,6 +139,13 @@ const NAMES: [string, string, string][] = [
   ["Grace Kim", "(972) 555-0182", "grace.kim@example.com"],
 ];
 
+// How each demo customer found the shop — so the profile's referral insight has
+// something real to show. Order matches NAMES.
+const REFERRAL_SOURCES = [
+  "Instagram", "Referral", "Google", "Walk-in", "Facebook", "Website",
+  "Referral", "Instagram", "Google", "Referral", "Walk-in", "Google",
+];
+
 export const DEMO_CUSTOMERS: Customer[] = NAMES.map(([name, phone, email], i) => ({
   id: `c${i}`,
   name,
@@ -112,6 +153,7 @@ export const DEMO_CUSTOMERS: Customer[] = NAMES.map(([name, phone, email], i) =>
   phone,
   address: `${1200 + i * 37} Preston Rd, Plano, TX`,
   notes: i === 0 ? "Prefers weekend mornings. Garage-kept." : null,
+  referral_source: REFERRAL_SOURCES[i % REFERRAL_SOURCES.length],
   // Spread joins across 6 months so "customer growth" has a real curve.
   created_at: at(Y, M - Math.min(5, Math.floor(i / 2)), 3 + ((i * 5) % 24)),
 }));

@@ -4,7 +4,9 @@ import { api as apiFetch } from "@/lib/api";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { Modal, Field } from "@/components/ui/Modal";
-import { Th, Td, IconBtn, Loading, EmptyState, SignInPrompt } from "@/components/ui/data";
+import { Th, Td, IconBtn, EmptyState, SignInPrompt } from "@/components/ui/data";
+import { confirm, toast } from "@/components/ui/feedback";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 import { FeatureLocked } from "@/components/UpgradeGate";
 import { useEntitlements } from "@/lib/entitlements";
 import { useAuth } from "@/lib/auth";
@@ -64,7 +66,7 @@ export default function Marketing() {
     [segment, channel, customers, appointments]
   );
 
-  if (ent.loading) return <Loading />;
+  if (ent.loading) return <PageSkeleton variant="table" kpis={4} />;
   if (!ent.hasFeature("marketing")) {
     return (
       <div className="animate-fade-up">
@@ -198,7 +200,7 @@ export default function Marketing() {
 
       {/* Campaigns */}
       {api.loading ? (
-        <Loading />
+        <PageSkeleton variant="table" kpis={0} header={false} toolbar={false} />
       ) : api.campaigns.length === 0 ? (
         <EmptyState
           art="megaphone"
@@ -262,11 +264,12 @@ export default function Marketing() {
                                 setNotice(null);
                                 if (!delivery) {
                                   // No API — fall back to recording it manually.
-                                  if (!window.confirm(`Mark “${c.name}” as sent to ${list.length}?`)) return;
+                                  if (!(await confirm({ title: `Mark “${c.name}” as sent?`, body: `Records this campaign as delivered to ${list.length} recipient${list.length === 1 ? "" : "s"}.`, confirmLabel: "Mark as sent" }))) return;
                                   await api.markSent(c.id, list.length);
+                                  toast.success("Campaign marked as sent");
                                   return;
                                 }
-                                if (!window.confirm(`Send “${c.name}” to ${list.length} ${c.channel === "sms" ? "phone" : "email"} recipient${list.length === 1 ? "" : "s"}?`)) return;
+                                if (!(await confirm({ title: `Send “${c.name}”?`, body: `This sends to ${list.length} ${c.channel === "sms" ? "phone" : "email"} recipient${list.length === 1 ? "" : "s"} right now.`, confirmLabel: "Send campaign" }))) return;
                                 setSending(c.id);
                                 try {
                                   const r = await api.send(c.id);
@@ -289,7 +292,7 @@ export default function Marketing() {
                           <IconBtn
                             label="Delete"
                             danger
-                            onClick={() => window.confirm(`Delete “${c.name}”?`) && api.remove(c.id)}
+                            onClick={async () => { if (await confirm({ title: `Delete “${c.name}”?`, body: "This permanently removes the campaign.", confirmLabel: "Delete campaign", tone: "danger" })) { try { await api.remove(c.id); toast.success("Campaign deleted"); } catch (e) { toast.error((e as Error).message); } } }}
                           >
                             <Trash2 className="h-4 w-4" />
                           </IconBtn>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
@@ -13,7 +13,9 @@ import {
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { Modal, Field } from "@/components/ui/Modal";
-import { Loading, EmptyState, SignInPrompt, IconBtn, money } from "@/components/ui/data";
+import { EmptyState, NoResults, SignInPrompt, IconBtn, money } from "@/components/ui/data";
+import { confirm, toast } from "@/components/ui/feedback";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 import { useLeads, useLeadActivities, type LeadInput } from "@/hooks/useLeads";
 import { useAuth } from "@/lib/auth";
 import {
@@ -21,8 +23,8 @@ import {
   type Lead, type LeadStatus, type LeadSource,
 } from "@/lib/models";
 import { cn } from "@/lib/cn";
+import { AXIS } from "@/lib/metrics";
 
-const AXIS = "#7E8AA3";
 const tooltipStyle = {
   borderRadius: 10, border: "1px solid rgba(126,138,163,.25)",
   background: "rgb(var(--panel))", color: "rgb(var(--ink))", fontSize: 12,
@@ -31,7 +33,7 @@ const tooltipStyle = {
 const STATUS_META: Record<LeadStatus, { color: string; chip: string; dot: string }> = {
   new:        { color: "#2E7BFF", chip: "bg-brand-500/12 text-brand-500 ring-brand-500/25", dot: "bg-brand-500" },
   contacted:  { color: "#7A5BE0", chip: "bg-violet/12 text-violet ring-violet/25", dot: "bg-violet" },
-  quote_sent: { color: "#E0A100", chip: "bg-warning/12 text-warning ring-warning/25", dot: "bg-warning" },
+  quote_sent: { color: "#E08A00", chip: "bg-warning/12 text-warning ring-warning/25", dot: "bg-warning" },
   scheduled:  { color: "#0EA5A5", chip: "bg-[#0EA5A5]/12 text-[#0EA5A5] ring-[#0EA5A5]/25", dot: "bg-[#0EA5A5]" },
   won:        { color: "#17A867", chip: "bg-success/12 text-success ring-success/25", dot: "bg-success" },
   lost:       { color: "#8A94A6", chip: "bg-line2 text-ink3 ring-line", dot: "bg-ink3" },
@@ -110,8 +112,9 @@ export default function Leads() {
     [leads]
   );
 
+  const deferredQuery = useDeferredValue(query);
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = deferredQuery.trim().toLowerCase();
     let list = leads.filter((l) => {
       if (statusFilter !== "all" && l.status !== statusFilter) return false;
       if (sourceFilter !== "all" && l.source !== sourceFilter) return false;
@@ -127,7 +130,7 @@ export default function Leads() {
       return b.created_at.localeCompare(a.created_at);
     });
     return list;
-  }, [leads, query, statusFilter, sourceFilter, sort]);
+  }, [leads, deferredQuery, statusFilter, sourceFilter, sort]);
 
   const openNew = () => { setEditing(null); setFormOpen(true); };
   const openEdit = (l: Lead) => { setEditing(l); setFormOpen(true); };
@@ -148,7 +151,7 @@ export default function Leads() {
       {!ready ? (
         <SignInPrompt what="leads" />
       ) : loading ? (
-        <Loading />
+        <PageSkeleton variant="list" kpis={6} header={false} />
       ) : leads.length === 0 ? (
         <EmptyState
           icon={<UserPlus />}
@@ -238,7 +241,15 @@ export default function Leads() {
 
           {/* List */}
           {filtered.length === 0 ? (
-            <div className="mt-6 border-y border-line px-4 py-14 text-center text-[13px] text-ink3">No leads match your filters.</div>
+            <NoResults
+              title="No leads match"
+              body="No enquiries fit your current search and filters. Clear them to see your whole pipeline."
+              onClear={() => {
+                setQuery("");
+                setStatusFilter("all");
+                setSourceFilter("all");
+              }}
+            />
           ) : (
             <div className="mt-5 overflow-hidden rounded-2xl border border-line">
               <div className="divide-y divide-line">
@@ -352,7 +363,7 @@ function StatusBadge({ status }: { status: LeadStatus }) {
 
 function LeadRow({ lead, onOpen }: { lead: Lead; onOpen: () => void }) {
   return (
-    <button onClick={onOpen} className="group flex w-full items-center gap-3 px-3.5 py-3 text-left transition hover:bg-panel2/60">
+    <button onClick={onOpen} className="cv-row group flex w-full items-center gap-3 px-3.5 py-3 text-left transition hover:bg-panel2/60">
       <span className={cn("h-2 w-2 flex-none rounded-full", STATUS_META[lead.status].dot)} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
@@ -404,15 +415,17 @@ function LeadDrawer({ lead, api, canManage, onClose, onEdit, onConverted }: {
 
   const convert = async () => {
     if (lead.converted_customer_id) { onConverted(lead.converted_customer_id); return; }
-    if (!window.confirm(`Convert ${lead.name} into a customer?`)) return;
+    if (!(await confirm({ title: `Convert ${lead.name} into a customer?`, body: "They'll be added to your customer book so you can book jobs and invoice them.", confirmLabel: "Convert to customer" }))) return;
     setBusy(true);
-    try { const id = await api.convertToCustomer(lead); onConverted(id); } finally { setBusy(false); }
+    try { const id = await api.convertToCustomer(lead); toast.success(`${lead.name} is now a customer`); onConverted(id); }
+    catch (e) { toast.error((e as Error).message); }
+    finally { setBusy(false); }
   };
 
   const del = async () => {
-    if (!window.confirm(`Delete ${lead.name}? This removes the lead and its history.`)) return;
-    await api.remove(lead.id);
-    onClose();
+    if (!(await confirm({ title: `Delete ${lead.name}?`, body: "This removes the lead and its activity history.", confirmLabel: "Delete lead", tone: "danger" }))) return;
+    try { await api.remove(lead.id); toast.success("Lead deleted"); onClose(); }
+    catch (e) { toast.error((e as Error).message); }
   };
 
   return createPortal(

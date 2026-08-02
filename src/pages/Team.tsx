@@ -12,7 +12,9 @@ import {
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { Modal, Field } from "@/components/ui/Modal";
-import { Loading, SignInPrompt, EmptyState } from "@/components/ui/data";
+import { SignInPrompt, EmptyState } from "@/components/ui/data";
+import { confirm, toast } from "@/components/ui/feedback";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 import { EmptyArt } from "@/components/ui/EmptyArt";
 import { FeatureLocked } from "@/components/UpgradeGate";
 import { useEntitlements } from "@/lib/entitlements";
@@ -68,7 +70,7 @@ export default function Team() {
   }
 
   // Team features (multiple employees, roles, assignments) require the Team plan.
-  if (ent.loading) return <Loading />;
+  if (ent.loading) return <PageSkeleton variant="plain" className="mx-auto max-w-3xl" />;
   if (!ent.hasFeature("team_members")) {
     return (
       <div className="animate-fade-up">
@@ -95,7 +97,7 @@ export default function Team() {
       />
 
       {team.loading ? (
-        <Loading />
+        <PageSkeleton variant="plain" header={false} className="mx-auto max-w-3xl" />
       ) : (
         <div className="mx-auto flex max-w-3xl flex-col gap-8">
           <MembersCard team={team} />
@@ -120,7 +122,7 @@ function MembersCard({ team }: { team: ReturnType<typeof useTeam> }) {
     try {
       await fn();
     } catch (e) {
-      alert((e as Error).message);
+      toast.error((e as Error).message);
     } finally {
       setBusy(null);
     }
@@ -138,15 +140,14 @@ function MembersCard({ team }: { team: ReturnType<typeof useTeam> }) {
           team={team}
           busy={busy === m.id}
           onChangeRole={(r) => act(m.id, () => team.changeRole(m.id, r))}
-          onRemove={() =>
-            window.confirm(`Remove ${memberName(m)} from the team?`) &&
-            act(m.id, () => team.removeMember(m.id))
-          }
-          onTransfer={() =>
-            window.confirm(
-              `Transfer ownership to ${memberName(m)}? You'll become an admin. This can't be undone by you afterward.`
-            ) && act(m.id, () => team.transferOwnership(m.id))
-          }
+          onRemove={async () => {
+            if (await confirm({ title: `Remove ${memberName(m)}?`, body: "They lose access to this workspace. You can re-invite them later.", confirmLabel: "Remove teammate", tone: "danger" }))
+              act(m.id, () => team.removeMember(m.id));
+          }}
+          onTransfer={async () => {
+            if (await confirm({ title: `Transfer ownership to ${memberName(m)}?`, body: "You'll become an admin. Only the new owner can transfer it back.", confirmLabel: "Transfer ownership", tone: "danger" }))
+              act(m.id, () => team.transferOwnership(m.id));
+          }}
         />
       ))}
     </Panel>
@@ -293,10 +294,10 @@ function InviteRow({ inv, team }: { inv: Invitation; team: ReturnType<typeof use
       setSent(true);
       setTimeout(() => setSent(false), 2500);
       if (!delivery.email.live) {
-        alert(`Rendered and delivered to the ${r.provider} provider.\n\nEmail sending isn't switched on yet, so it was logged by the API instead of hitting ${r.to}. Set EMAIL_PROVIDER=sendgrid + SENDGRID_API_KEY to send for real.`);
+        toast.info(`Invite logged via ${r.provider}. Live email isn't switched on yet, so it wasn't sent to ${r.to}.`);
       }
     } catch (e) {
-      alert((e as Error).message);
+      toast.error((e as Error).message);
     } finally {
       setBusy(false);
     }
@@ -313,7 +314,7 @@ function InviteRow({ inv, team }: { inv: Invitation; team: ReturnType<typeof use
     try {
       await fn();
     } catch (e) {
-      alert((e as Error).message);
+      toast.error((e as Error).message);
     } finally {
       setBusy(false);
     }

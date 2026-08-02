@@ -143,9 +143,10 @@ export function useInvoices() {
   const remove = async (id: string) => {
     demoGuard();
     if (!supabase) throw new Error("Not available.");
+    const prev = invoices; // snapshot for rollback
+    setInvoices((x) => x.filter((i) => i.id !== id)); // optimistic: gone instantly
     const { error } = await supabase.from("invoices").delete().eq("id", id);
-    if (error) throw new Error(error.message);
-    setInvoices((x) => x.filter((i) => i.id !== id));
+    if (error) { setInvoices(prev); throw new Error(error.message); }
   };
 
   return { invoices, loading, ready: Boolean(org), reload: load, create, setStatus, markSent, remove, getLineItems };

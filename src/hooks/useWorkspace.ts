@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
+import { isDemo, DEMO_WORKSPACE } from "@/lib/demo";
 
 export interface WorkspaceSettings {
   owner_name?: string | null;
@@ -9,6 +10,25 @@ export interface WorkspaceSettings {
   location?: string | null;
   selected_plan?: "free" | "pro" | "team";
   founding_member?: boolean;
+  // --- Control-center settings (all persisted into the same jsonb, no migration) ---
+  tagline?: string | null;
+  tax_enabled?: boolean;
+  tax_label?: string | null;
+  tax_rate?: number | null;
+  notif_new_booking?: boolean;
+  notif_reminders?: boolean;
+  notif_review_requests?: boolean;
+  notif_payment?: boolean;
+  notif_sms?: boolean;
+  ai_recommendations?: boolean;
+  ai_business_coach?: boolean;
+  pay_deposit_pct?: number | null;
+  pay_terms_days?: number | null;
+  pay_footer?: string | null;
+  cal_default_duration?: number | null;
+  cal_week_start?: "sun" | "mon";
+  cal_open?: string | null;
+  cal_close?: string | null;
 }
 
 export interface Workspace {
@@ -21,10 +41,11 @@ export interface Workspace {
 
 export function useWorkspace() {
   const { org } = useAuth();
-  const [ws, setWs] = useState<Workspace | null>(null);
+  const [ws, setWs] = useState<Workspace | null>(isDemo() ? (DEMO_WORKSPACE as Workspace) : null);
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
+    if (isDemo()) return; // demo keeps its in-memory workspace
     if (!supabase || !org) {
       setWs(null);
       return;
@@ -45,8 +66,15 @@ export function useWorkspace() {
 
   /** Update name and/or merge into settings jsonb. */
   const save = async (patch: { name?: string; settings?: Partial<WorkspaceSettings> }) => {
-    if (!supabase || !ws) throw new Error("No workspace loaded.");
+    if (!ws) throw new Error("No workspace loaded.");
     const merged = { ...ws.settings, ...(patch.settings ?? {}) };
+    // Demo: reflect changes in-memory only, never hit the database.
+    if (isDemo()) {
+      const next = { ...ws, name: patch.name ?? ws.name, settings: merged };
+      setWs(next);
+      return next;
+    }
+    if (!supabase) throw new Error("No workspace loaded.");
     const { data, error } = await supabase
       .from("organizations")
       .update({ name: patch.name ?? ws.name, settings: merged })

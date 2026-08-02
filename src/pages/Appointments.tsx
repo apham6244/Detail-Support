@@ -1,12 +1,14 @@
 import { useMemo, useState } from "react";
 import {
   Plus, Trash2, UserRound, ChevronLeft, ChevronRight,
-  Clock, Bell, BellPlus, Car, Wrench, StickyNote, Send,
+  Clock, Bell, BellPlus, Car, Wrench, StickyNote, Send, AlertTriangle,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { Modal, Field } from "@/components/ui/Modal";
-import { Th, Td, IconBtn, Loading, EmptyState, SignInPrompt, money } from "@/components/ui/data";
+import { Th, Td, IconBtn, EmptyState, SignInPrompt, money } from "@/components/ui/data";
+import { confirm, toast } from "@/components/ui/feedback";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 import { useAppointments, type AppointmentInput } from "@/hooks/useAppointments";
 import { useCustomers } from "@/hooks/useCustomers";
 import { useServices } from "@/hooks/useServices";
@@ -92,6 +94,23 @@ export default function Appointments() {
     return m;
   }, [appointments]);
 
+  // Double-booking guard: the first active appointment whose time window overlaps
+  // the one being booked/edited. Non-blocking — a shop with two bays can override.
+  const conflict = useMemo(() => {
+    if (!when) return null;
+    const start = new Date(when).getTime();
+    if (Number.isNaN(start)) return null;
+    const end = start + (Number(duration) || 60) * 60_000;
+    for (const a of appointments) {
+      if (editing && a.id === editing.id) continue;
+      if (a.status === "cancelled" || a.status === "no_show") continue;
+      const aStart = new Date(a.scheduled_at).getTime();
+      const aEnd = aStart + (a.duration_min ?? 60) * 60_000;
+      if (start < aEnd && aStart < end) return { appt: a, endsAt: aEnd };
+    }
+    return null;
+  }, [when, duration, appointments, editing]);
+
   const live = detail ? appointments.find((a) => a.id === detail.id) ?? null : null;
 
   const openNew = (at?: Date) => {
@@ -133,6 +152,7 @@ export default function Appointments() {
       if (editing) await update(editing.id, input);
       else await create(input);
       setFormOpen(false);
+      toast.success(editing ? "Job updated" : "Job booked");
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   };
 
@@ -184,7 +204,7 @@ export default function Appointments() {
         <span className="text-[14px] font-bold tracking-tight">{title}</span>
       </div>
 
-      {loading ? <Loading /> : (
+      {loading ? <PageSkeleton variant="calendar" header={false} /> : (
         <>
           {view === "month" && <MonthView cursor={cursor} byDay={byDay} onDay={(d) => { setCursor(d); setView("day"); }} onPick={setDetail} />}
           {view === "week" && <WeekView cursor={cursor} byDay={byDay} onPick={setDetail} onAdd={isManager ? openNew : undefined} />}
@@ -231,7 +251,7 @@ export default function Appointments() {
               </Field>
               {canAssign && (
                 <Field label="Assignee">
-                  <select className="input" value={live.assigned_to ?? ""} onChange={(e) => assign(live.id, e.target.value || null).catch((x) => alert((x as Error).message))}>
+                  <select className="input" value={live.assigned_to ?? ""} onChange={(e) => assign(live.id, e.target.value || null).catch((x) => toast.error((x as Error).message))}>
                     <option value="">Unassigned</option>
                     {members.map((m) => <option key={m.user_id} value={m.user_id}>{m.name}</option>)}
                   </select>
@@ -244,7 +264,7 @@ export default function Appointments() {
             <div className="flex gap-2 border-t border-line pt-3">
               {isManager && <Button onClick={() => openEdit(live)}>Edit job</Button>}
               {isManager && (
-                <IconBtn label="Delete" danger onClick={() => window.confirm("Delete this job?") && remove(live.id).then(() => setDetail(null))}>
+                <IconBtn label="Delete" danger onClick={async () => { if (await confirm({ title: "Delete this job?", body: "The appointment is permanently removed from your schedule.", confirmLabel: "Delete job", tone: "danger" })) { try { await remove(live.id); setDetail(null); toast.success("Job deleted"); } catch (e) { toast.error((e as Error).message); } } }}>
                   <Trash2 className="h-4 w-4" />
                 </IconBtn>
               )}
@@ -294,6 +314,15 @@ export default function Appointments() {
               <input type="number" min={0} step="0.01" className="input tnum" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="0.00" />
             </Field>
           </div>
+          {conflict && (
+            <div className="flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2.5 text-[12.5px] leading-relaxed text-warning ring-1 ring-inset ring-warning/25">
+              <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
+              <span>
+                Overlaps <b>{conflict.appt.customer?.name ?? "another job"}</b>
+                {conflict.appt.service?.name ? ` (${conflict.appt.service.name})` : ""} · {time(conflict.appt.scheduled_at)}–{time(new Date(conflict.endsAt).toISOString())}. You can still book if you run parallel bays.
+              </span>
+            </div>
+          )}
           <Field label="Notes">
             <textarea className="input" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Gate code, paint condition, customer requests…" />
           </Field>
@@ -413,7 +442,7 @@ function DayView({ cursor, byDay, onPick, onAdd }: {
   const list = byDay.get(key(cursor)) ?? [];
   if (list.length === 0) {
     return (
-      <EmptyState art="garage" title="Nothing booked" body="This day is clear."
+      <EmptyState art="garage" title="Nothing booked" body="This day is clear — schedule a detail and it'll show up right here."
         action={onAdd ? <Button variant="primary" icon={<Plus />} onClick={() => onAdd(new Date(cursor))}>Book job</Button> : undefined} />
     );
   }
@@ -480,7 +509,7 @@ function RemindersBlock({ appointment, api }: { appointment: Appointment; api: R
     try {
       const at = new Date(new Date(appointment.scheduled_at).getTime() - hoursBefore * 3600_000);
       await api.create(appointment.id, at.toISOString());
-    } catch (e) { alert((e as Error).message); } finally { setBusy(false); }
+    } catch (e) { toast.error((e as Error).message); } finally { setBusy(false); }
   };
 
   /** Send it through the API now (server renders + picks the channel). */
@@ -490,9 +519,9 @@ function RemindersBlock({ appointment, api }: { appointment: Appointment; api: R
       const r = await sendReminderNow(id);
       await api.reload();
       if (!delivery.sms.live && r.channel === "sms") {
-        alert(`Rendered and delivered to the ${r.provider} provider.\n\nTexting isn't switched on yet, so it was logged by the API instead of going to ${r.to}. Set SMS_PROVIDER=twilio + your Twilio keys to send for real.`);
+        toast.info(`Reminder logged via ${r.provider}. Live texting isn't switched on yet, so it wasn't sent to ${r.to}.`);
       }
-    } catch (e) { alert((e as Error).message); } finally { setBusy(false); }
+    } catch (e) { toast.error((e as Error).message); } finally { setBusy(false); }
   };
 
   return (
@@ -528,13 +557,14 @@ function RemindersBlock({ appointment, api }: { appointment: Appointment; api: R
                       setBusy(true);
                       try {
                         const res = await api.sendNow(r.id);
-                        alert(`Reminder sent to ${res.to} via ${res.provider}.`);
+                        toast.success(`Reminder sent to ${res.to} via ${res.provider}`);
                       } catch (e) {
                         // API unreachable? offer to just record it by hand.
                         const msg = (e as Error).message;
-                        if (/Connection error/i.test(msg) && window.confirm(`${msg}\n\nMark this reminder as sent anyway?`)) {
+                        if (/Connection error/i.test(msg) && await confirm({ title: "Couldn't reach the messaging service", body: `${msg} Mark this reminder as sent anyway?`, confirmLabel: "Mark as sent" })) {
                           await api.markSent(r.id);
-                        } else alert(msg);
+                          toast.success("Reminder marked as sent");
+                        } else toast.error(msg);
                       } finally { setBusy(false); }
                     }}
                   >

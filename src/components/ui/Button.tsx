@@ -34,7 +34,9 @@ export function Button({
   return (
     <button
       className={cn(
-        "inline-flex h-[38px] items-center justify-center gap-2 rounded-lg border px-[15px] text-[13px] font-semibold tracking-[0.01em] select-none",
+        // 38px base; a 44px min-height on mobile keeps every button a comfortable
+        // thumb target (min-h doesn't fight callers that set an explicit height).
+        "inline-flex h-[38px] min-h-[44px] items-center justify-center gap-2 rounded-lg border px-[15px] text-[13px] font-semibold tracking-[0.01em] select-none md:min-h-0",
         // Smooth, springy micro-interactions: eased transitions + a tactile press.
         "transition-[transform,box-shadow,background-color,border-color,filter,color] duration-150 ease-out",
         "active:scale-[0.97]",

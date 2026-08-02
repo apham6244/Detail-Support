@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import { Clock, UserRound, CalendarDays } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
-import { Loading, SignInPrompt, EmptyState } from "@/components/ui/data";
+import { SignInPrompt, EmptyState } from "@/components/ui/data";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 import { FeatureLocked } from "@/components/UpgradeGate";
 import { useAppointments } from "@/hooks/useAppointments";
 import { useMembers } from "@/hooks/useMembers";
@@ -71,7 +72,7 @@ export default function Schedule() {
   }, [filtered]);
 
   if (!ready) return <SignInPrompt what="the schedule" />;
-  if (ent.loading) return <Loading />;
+  if (ent.loading) return <PageSkeleton variant="list" kpis={0} toolbar={false} />;
   if (!ent.hasFeature("team_scheduling")) {
     return (
       <div className="animate-fade-up">
@@ -110,7 +111,7 @@ export default function Schedule() {
       />
 
       {loading ? (
-        <Loading />
+        <PageSkeleton variant="list" kpis={0} toolbar={false} header={false} />
       ) : days.length === 0 ? (
         <EmptyState
           art="garage"

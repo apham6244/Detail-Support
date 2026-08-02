@@ -61,9 +61,10 @@ export function useVehicles(customerId: string | null) {
   const remove = async (id: string) => {
     demoGuard();
     if (!supabase) throw new Error("Not available.");
+    const prev = vehicles; // snapshot for rollback
+    setVehicles((v) => v.filter((x) => x.id !== id)); // optimistic
     const { error } = await supabase.from("vehicles").delete().eq("id", id);
-    if (error) throw new Error(error.message);
-    setVehicles((v) => v.filter((x) => x.id !== id));
+    if (error) { setVehicles(prev); throw new Error(error.message); }
   };
 
   return { vehicles, loading, reload: load, create, remove };

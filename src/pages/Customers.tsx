@@ -1,24 +1,25 @@
-import { useMemo, useState } from "react";
+import { memo, useCallback, useDeferredValue, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
+import { ResponsiveContainer, AreaChart, Area } from "recharts";
 import {
   Plus, Search, Car, ChevronRight, Phone, Mail, Wrench, DollarSign,
   Clock, Crown, Sparkles, Users, CalendarCheck, CalendarPlus, Receipt,
-  UserRound, SlidersHorizontal, TrendingUp, type LucideIcon,
+  UserRound, SlidersHorizontal, TrendingUp, TrendingDown,
+  LayoutGrid, List, Gauge, type LucideIcon,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
-import { Modal, Field } from "@/components/ui/Modal";
-import { Loading, EmptyState, SignInPrompt, money } from "@/components/ui/data";
+import { AddCustomerModal } from "@/components/customer/AddCustomerModal";
+import { EmptyState, NoResults, SignInPrompt, money } from "@/components/ui/data";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 import { CountUp } from "@/components/ui/CountUp";
-import { useCustomers, type CustomerInput } from "@/hooks/useCustomers";
+import { useCustomers } from "@/hooks/useCustomers";
 import { useAppointments } from "@/hooks/useAppointments";
 import { useInvoices } from "@/hooks/useInvoices";
 import { useAuth } from "@/lib/auth";
 import type { Customer } from "@/lib/models";
 import { cn } from "@/lib/cn";
-
-const EMPTY: CustomerInput = { name: "", email: "", phone: "", address: "", notes: "" };
 
 const DAY = 86_400_000;
 const ACTIVE_STATUSES = new Set(["scheduled", "confirmed", "in_progress"]);
@@ -43,7 +44,18 @@ type Enriched = {
   needsFollowup: boolean;
   isInactive: boolean;
   lastActivity: number;  // sort key (ms)
+  health: number;        // 0–100 relationship health, derived
+  estNextDays: number | null; // predicted days to next visit, from cadence
 };
+
+type HealthTier = { label: string; tone: Tone; hex: string };
+function healthTier(h: number): HealthTier {
+  if (h >= 80) return { label: "Excellent", tone: "success", hex: "#17A867" };
+  if (h >= 60) return { label: "Healthy", tone: "brand", hex: "#2E7BFF" };
+  if (h >= 40) return { label: "At risk", tone: "amber", hex: "#E08A00" };
+  return { label: "Needs follow-up", tone: "amber", hex: "#E5484D" };
+}
+const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 
 const daysSince = (iso: string) => Math.floor((Date.now() - new Date(iso).getTime()) / DAY);
 
@@ -73,6 +85,8 @@ const SEGMENTS = [
   { key: "all", label: "All customers", match: (_: Enriched) => true },
   { key: "vip", label: "VIP", match: (e: Enriched) => e.isVip },
   { key: "active", label: "Active", match: (e: Enriched) => e.isActive },
+  { key: "upcoming", label: "Upcoming appt", match: (e: Enriched) => e.upcoming > 0 },
+  { key: "highvalue", label: "High value", match: (e: Enriched) => e.spent >= 500 },
   { key: "followup", label: "Needs follow-up", match: (e: Enriched) => e.needsFollowup },
   { key: "inactive", label: "Inactive", match: (e: Enriched) => e.isInactive },
   { key: "new", label: "New", match: (e: Enriched) => e.isNew },
@@ -101,10 +115,8 @@ export default function Customers() {
   const [query, setQuery] = useState("");
   const [segment, setSegment] = useState<SegKey>("all");
   const [sort, setSort] = useState<SortKey>("recent");
+  const [view, setView] = useState<"card" | "list">("card");
   const [formOpen, setFormOpen] = useState(false);
-  const [form, setForm] = useState<CustomerInput>(EMPTY);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   // Fold every customer's appointments + invoices into per-client figures once.
   const enriched = useMemo<Enriched[]>(() => {
@@ -158,6 +170,27 @@ export default function Customers() {
         ...appts.map((a) => new Date(a.scheduled_at).getTime())
       );
 
+      // Relationship health — a recency/activity/loyalty blend. All derived.
+      let health: number;
+      if (isNew) health = 62;
+      else if (isActive) health = 90;
+      else if (quiet === null) health = 58;
+      else if (quiet < 45) health = 84;
+      else if (quiet < 90) health = 66;
+      else if (quiet < 180) health = 44;
+      else health = 26;
+      health = clamp(health + (isVip ? 6 : 0) + (completed.length >= 5 ? 4 : 0), 5, 99);
+
+      // Predicted next visit from the average gap between completed visits.
+      let estNextDays: number | null = null;
+      if (!isActive && completed.length >= 2 && lastVisit) {
+        const ds = completed.map((a) => new Date(a.scheduled_at).getTime()).sort((x, y) => x - y);
+        let tot = 0;
+        for (let k = 1; k < ds.length; k++) tot += ds[k] - ds[k - 1];
+        const avgGap = tot / (ds.length - 1) / DAY;
+        estNextDays = Math.round(avgGap - daysSince(lastVisit));
+      }
+
       return {
         c,
         jobs: appts.length,
@@ -170,7 +203,7 @@ export default function Customers() {
         favoriteService: best > 1 ? favoriteService : null,
         nextAppt: future[0] ? { at: future[0].scheduled_at, service: future[0].service?.name ?? null } : null,
         upcoming: future.length,
-        isVip, isNew, isActive, needsFollowup, isInactive, lastActivity,
+        isVip, isNew, isActive, needsFollowup, isInactive, lastActivity, health, estNextDays,
       };
     });
   }, [customers, appointments, invoices]);
@@ -185,6 +218,36 @@ export default function Customers() {
     [enriched]
   );
 
+  /** 6-month series + month-over-month deltas for the hero and KPI sparklines. */
+  const trends = useMemo(() => {
+    const now = new Date();
+    const collected = (i: (typeof invoices)[number]) =>
+      i.status === "paid" ? i.total : i.status === "deposit_paid" ? i.deposit_amount : 0;
+    const custSeries: { value: number }[] = [];
+    const revSeries: { value: number }[] = [];
+    for (let k = 5; k >= 0; k--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - k, 1);
+      const n = new Date(now.getFullYear(), now.getMonth() - k + 1, 1);
+      custSeries.push({ value: customers.filter((c) => new Date(c.created_at) >= d && new Date(c.created_at) < n).length });
+      revSeries.push({ value: invoices.reduce((s, i) => { const t = new Date(i.issued_at || i.created_at); return t >= d && t < n ? s + collected(i) : s; }, 0) });
+    }
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const activeThisMonth = new Set(
+      appointments.filter((a) => new Date(a.scheduled_at).getTime() >= monthStart).map((a) => a.customer_id)
+    ).size;
+    const delta = (s: { value: number }[]) => {
+      const cur = s[5]?.value ?? 0, prev = s[4]?.value ?? 0;
+      return prev > 0 ? ((cur - prev) / prev) * 100 : cur > 0 ? 100 : 0;
+    };
+    return {
+      custSeries, revSeries,
+      newThisMonth: custSeries[5].value, newLastMonth: custSeries[4].value,
+      revThisMonth: revSeries[5].value, revLastMonth: revSeries[4].value,
+      custDelta: delta(custSeries), revDelta: delta(revSeries),
+      activeThisMonth,
+    };
+  }, [customers, invoices, appointments]);
+
   // Only surface segment chips that actually have members (keeps it relevant, not noisy).
   const segCounts = useMemo(() => {
     const m = {} as Record<SegKey, number>;
@@ -192,9 +255,13 @@ export default function Customers() {
     return m;
   }, [enriched]);
 
+  // Search stays type-instant: the input drives `query`, but the heavy
+  // filter/sort runs off a deferred copy so React can interrupt it.
+  const deferredQuery = useDeferredValue(query);
+
   const filtered = useMemo(() => {
     const seg = SEGMENTS.find((s) => s.key === segment)!;
-    const q = query.trim().toLowerCase();
+    const q = deferredQuery.trim().toLowerCase();
     const list = enriched
       .filter(seg.match)
       .filter((e) =>
@@ -214,36 +281,24 @@ export default function Customers() {
         default: return b.lastActivity - a.lastActivity;
       }
     });
-  }, [enriched, segment, query, sort]);
+  }, [enriched, segment, deferredQuery, sort]);
 
-  const openNew = () => { setForm(EMPTY); setError(null); setFormOpen(true); };
+  const openNew = () => setFormOpen(true);
 
-  const save = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const c = await create(form);
-      setFormOpen(false);
-      navigate(`/customers/${c.id}`);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
+  // Stable handlers so memoized rows/cards don't re-render on every keystroke.
+  const openCustomer = useCallback((id: string) => navigate(`/customers/${id}`), [navigate]);
+  const goSchedule = useCallback(() => navigate("/appointments"), [navigate]);
+  const goInvoice = useCallback(() => navigate("/invoices"), [navigate]);
 
   return (
     <div className="animate-fade-up">
-      <PageHeader
-        title="Customers"
-        subtitle="Your clients, their vehicles, and their history"
-        actions={ready && canManage ? <Button variant="primary" icon={<Plus />} onClick={openNew}>Add customer</Button> : undefined}
-      />
-
       {!ready ? (
-        <SignInPrompt what="customers" />
+        <>
+          <PageHeader title="Customers" subtitle="Your clients, their vehicles, and their history" />
+          <SignInPrompt what="customers" />
+        </>
       ) : loading ? (
-        <Loading />
+        <PageSkeleton variant="hero-cards" kpis={4} />
       ) : customers.length === 0 ? (
         <EmptyState
           art="car"
@@ -257,16 +312,46 @@ export default function Customers() {
         />
       ) : (
         <>
-          {/* Summary strip */}
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Summary icon={Users} tone="brand" label="Total clients" value={totals.clients} />
-            <Summary icon={Crown} tone="violet" label="VIP clients" value={totals.vips} />
-            <Summary icon={Clock} tone="amber" label="Need follow-up" value={totals.followups} />
-            <Summary icon={DollarSign} tone="success" label="Lifetime revenue" value={totals.revenue} isMoney />
+          {/* ---- Hero ---------------------------------------------------- */}
+          <section className="surface relative overflow-hidden rounded-[22px]">
+            <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-br from-brand-500/[0.10] via-transparent to-violet/[0.08]" />
+            <div aria-hidden className="pointer-events-none absolute -right-16 -top-20 h-64 w-64 rounded-full bg-brand-500/12 blur-[90px]" />
+            <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-paint-gloss opacity-30" />
+            <div className="relative flex flex-col gap-5 p-5 sm:p-7 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0">
+                <h1 className="font-display text-[30px] font-extrabold leading-none tracking-tight text-ink sm:text-[36px]">Customers</h1>
+                <p className="mt-2 max-w-md text-[13.5px] leading-relaxed text-ink3">
+                  Every client you detail — their vehicles, spend and history, with the relationships that need attention surfaced automatically.
+                </p>
+                <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2.5">
+                  <HeroFact label="Total clients" value={String(totals.clients)} />
+                  <HeroFact label="Active this month" value={String(trends.activeThisMonth)} />
+                  <HeroFact label="New this month" value={`+${trends.newThisMonth}`} tone="text-success" />
+                  <HeroFact label="Lifetime revenue" value={money(Math.round(totals.revenue))} />
+                </div>
+              </div>
+              {canManage && (
+                <button onClick={openNew}
+                  className="group inline-flex flex-none items-center justify-center gap-2 self-start rounded-2xl bg-gradient-to-br from-brand-500 to-brand-600 px-6 py-3.5 text-[15px] font-semibold text-white shadow-glow transition-[transform,box-shadow,filter] duration-150 hover:brightness-[1.06] hover:shadow-glow-lg active:scale-[0.98] lg:self-center">
+                  <Plus className="h-[18px] w-[18px] transition-transform duration-150 group-hover:rotate-90" />
+                  Add customer
+                </button>
+              )}
+            </div>
+          </section>
+
+          {/* ---- KPI cards with sparklines ------------------------------ */}
+          <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Kpi tone="success" icon={DollarSign} label="Lifetime revenue" value={money(Math.round(totals.revenue))}
+              delta={trends.revDelta} deltaNote={`${money(Math.round(trends.revThisMonth))} this month`} series={trends.revSeries} />
+            <Kpi tone="brand" icon={Users} label="New customers" value={String(trends.newThisMonth)}
+              delta={trends.custDelta} deltaNote={`vs ${trends.newLastMonth} last month`} series={trends.custSeries} />
+            <SummaryKpi icon={Crown} tone="violet" label="VIP clients" value={totals.vips} note="≥ $1k or 5+ details" />
+            <SummaryKpi icon={Clock} tone="amber" label="Need follow-up" value={totals.followups} note="Quiet 60–180 days" />
           </div>
 
-          {/* Search · sort · filters */}
-          <div className="mt-6 flex flex-wrap items-center gap-2.5">
+          {/* Search · sort · view · filters */}
+          <div className="mt-5 flex flex-wrap items-center gap-2.5">
             <div className="relative min-w-[240px] flex-1 sm:max-w-[340px]">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-[17px] w-[17px] -translate-y-1/2 text-ink3" />
               <input
@@ -285,6 +370,16 @@ export default function Customers() {
               >
                 {SORTS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
               </select>
+            </div>
+            {/* View toggle */}
+            <div className="flex h-11 items-center rounded-xl bg-panel2 p-1">
+              {([["card", LayoutGrid], ["list", List]] as const).map(([v, Icon]) => (
+                <button key={v} onClick={() => setView(v)} aria-label={`${v} view`}
+                  className={cn("flex h-9 w-9 items-center justify-center rounded-lg transition-colors",
+                    view === v ? "bg-panel text-ink shadow-sm" : "text-ink3 hover:text-ink")}>
+                  <Icon className="h-[17px] w-[17px]" />
+                </button>
+              ))}
             </div>
           </div>
 
@@ -312,8 +407,24 @@ export default function Customers() {
           </div>
 
           {filtered.length === 0 ? (
-            <div className="mt-6 rounded-2xl border border-line px-4 py-14 text-center text-[13px] text-ink3">
-              {query ? <>No matches for “{query}”.</> : "No customers in this group yet."}
+            <NoResults
+              title={query ? "No matching customers" : "This group is empty"}
+              body={
+                query
+                  ? `No one matches “${query}”. Try a different name, or clear the search to see everyone.`
+                  : "No customers fall into this segment right now. Switch groups or clear the filter to see your full list."
+              }
+              onClear={() => {
+                setQuery("");
+                setSegment("all");
+              }}
+              clearLabel={query ? "Clear search" : "Clear filter"}
+            />
+          ) : view === "list" ? (
+            <div className="surface mt-5 overflow-hidden rounded-2xl">
+              {filtered.map((e, i) => (
+                <CustomerRow key={e.c.id} e={e} index={i} onOpen={openCustomer} />
+              ))}
             </div>
           ) : (
             <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -322,9 +433,9 @@ export default function Customers() {
                   key={e.c.id}
                   e={e}
                   index={i}
-                  onOpen={() => navigate(`/customers/${e.c.id}`)}
-                  onSchedule={() => navigate("/appointments")}
-                  onInvoice={() => navigate("/invoices")}
+                  onOpen={openCustomer}
+                  onSchedule={goSchedule}
+                  onInvoice={goInvoice}
                 />
               ))}
             </div>
@@ -332,43 +443,7 @@ export default function Customers() {
         </>
       )}
 
-      <Modal
-        open={formOpen}
-        onClose={() => setFormOpen(false)}
-        title="Add customer"
-        footer={
-          <>
-            <Button onClick={() => setFormOpen(false)}>Cancel</Button>
-            <Button variant="primary" onClick={save} disabled={busy || !form.name.trim()}>
-              {busy ? "Saving…" : "Save"}
-            </Button>
-          </>
-        }
-      >
-        <div className="flex flex-col gap-4">
-          <Field label="Name">
-            <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Jane Doe" />
-          </Field>
-          <div className="grid grid-cols-2 gap-4">
-            <Field label="Phone">
-              <input className="input" value={form.phone ?? ""} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="(214) 555-0134" />
-            </Field>
-            <Field label="Email">
-              <input className="input" value={form.email ?? ""} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="jane@example.com" />
-            </Field>
-          </div>
-          <Field label="Address">
-            <input className="input" value={form.address ?? ""} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="123 Main St, Plano TX" />
-          </Field>
-          <Field label="Notes">
-            <textarea className="input" rows={2} value={form.notes ?? ""} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
-          </Field>
-          <div className="flex items-center gap-1.5 text-[11.5px] text-ink3">
-            <Car className="h-3.5 w-3.5" /> You can add their vehicles on the next screen.
-          </div>
-          {error && <div className="rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
-        </div>
-      </Modal>
+      <AddCustomerModal open={formOpen} onClose={() => setFormOpen(false)} create={create} />
     </div>
   );
 }
@@ -384,25 +459,131 @@ const TONE: Record<Tone, { text: string; bubble: string; chip: string }> = {
   ink:     { text: "text-ink3",      bubble: "bg-line2 text-ink3",             chip: "bg-line2 text-ink3 ring-line" },
 };
 
-function Summary({ icon: Icon, tone, label, value, isMoney }: {
-  icon: LucideIcon; tone: Tone; label: string; value: number; isMoney?: boolean;
-}) {
+function HeroFact({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
-    <div className="surface flex items-center gap-3 rounded-2xl p-4">
-      <span className={cn("flex h-10 w-10 flex-none items-center justify-center rounded-xl", TONE[tone].bubble)}>
-        <Icon className="h-[18px] w-[18px]" />
-      </span>
-      <div className="min-w-0">
-        <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-ink3">{label}</div>
-        <CountUp
-          value={value}
-          format={isMoney ? (n) => money(n) : (n) => String(Math.round(n))}
-          className="mt-0.5 block font-display text-[20px] font-bold leading-none tracking-tight tnum text-ink"
-        />
+    <div>
+      <div className="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-ink3">{label}</div>
+      <div className={cn("mt-0.5 font-display text-[19px] font-bold leading-none tracking-tight tnum text-ink", tone)}>{value}</div>
+    </div>
+  );
+}
+
+function DeltaChip({ value }: { value: number }) {
+  const flat = Math.round(value) === 0;
+  const up = value >= 0;
+  return (
+    <span className={cn("inline-flex flex-none items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-bold tnum",
+      flat ? "bg-line2 text-ink3" : up ? "bg-success/12 text-success" : "bg-danger/12 text-danger")}>
+      {flat ? null : up ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+      {up ? "+" : "−"}{Math.abs(Math.round(value))}%
+    </span>
+  );
+}
+
+/** KPI card with a mini sparkline, month-over-month delta and comparison note. */
+function Kpi({ tone, icon: Icon, label, value, delta, deltaNote, series }: {
+  tone: Tone; icon: LucideIcon; label: string; value: string;
+  delta: number; deltaNote: string; series: { value: number }[];
+}) {
+  const hex = tone === "success" ? "#17A867" : "#2E7BFF";
+  return (
+    <div className="surface group relative overflow-hidden rounded-2xl p-4 transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-lift">
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-paint-gloss opacity-25" />
+      <div className="relative">
+        <div className="flex items-center justify-between">
+          <span className={cn("flex h-9 w-9 flex-none items-center justify-center rounded-xl", TONE[tone].bubble)}><Icon className="h-[18px] w-[18px]" /></span>
+          <DeltaChip value={delta} />
+        </div>
+        <div className="mt-3 font-display text-[22px] font-bold leading-none tracking-tight tnum text-ink">{value}</div>
+        <div className="mt-1 text-[11.5px] font-medium text-ink2">{label}</div>
+        <div className="mt-0.5 text-[11px] text-ink3">{deltaNote}</div>
+        <div className="-mx-1 mt-2 h-9">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={series} margin={{ top: 2, bottom: 0, left: 0, right: 0 }}>
+              <defs>
+                <linearGradient id={`k${label.replace(/\s/g, "")}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={hex} stopOpacity={0.3} />
+                  <stop offset="100%" stopColor={hex} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <Area type="monotone" dataKey="value" stroke={hex} strokeWidth={2} fill={`url(#k${label.replace(/\s/g, "")})`} dot={false} animationDuration={800} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
       </div>
     </div>
   );
 }
+
+/** Simpler KPI (count + note) for metrics without a meaningful trend line. */
+function SummaryKpi({ icon: Icon, tone, label, value, note }: {
+  icon: LucideIcon; tone: Tone; label: string; value: number; note: string;
+}) {
+  return (
+    <div className="surface group rounded-2xl p-4 transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-lift">
+      <div className="flex items-center justify-between">
+        <span className={cn("flex h-9 w-9 flex-none items-center justify-center rounded-xl", TONE[tone].bubble)}><Icon className="h-[18px] w-[18px]" /></span>
+      </div>
+      <CountUp value={value} format={(n) => String(Math.round(n))} className="mt-3 block font-display text-[22px] font-bold leading-none tracking-tight tnum text-ink" />
+      <div className="mt-1 text-[11.5px] font-medium text-ink2">{label}</div>
+      <div className="mt-0.5 text-[11px] text-ink3">{note}</div>
+    </div>
+  );
+}
+
+/** Compact health ring used on cards and list rows. */
+function HealthRing({ value, size = 42, stroke = 4.5 }: { value: number; size?: number; stroke?: number }) {
+  const t = healthTier(value);
+  const r = (size - stroke) / 2, c = 2 * Math.PI * r, offset = c * (1 - clamp(value, 0, 100) / 100);
+  return (
+    <div className="relative flex-none" style={{ width: size, height: size }} title={`Health · ${t.label}`}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgb(var(--line2))" strokeWidth={stroke} />
+        <motion.circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={t.hex} strokeWidth={stroke} strokeLinecap="round"
+          strokeDasharray={c} initial={{ strokeDashoffset: c }} animate={{ strokeDashoffset: offset }} transition={{ duration: 0.8, ease: "easeOut" }} />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="font-display text-[11px] font-bold tnum text-ink">{value}</span>
+      </div>
+    </div>
+  );
+}
+
+/** Dense list-view row — same data, scannable one-per-line. */
+const CustomerRow = memo(function CustomerRow({ e, index, onOpen }: { e: Enriched; index: number; onOpen: (id: string) => void }) {
+  const { c } = e;
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.24, delay: Math.min(index, 12) * 0.02 }}
+      role="button" tabIndex={0} onClick={() => onOpen(c.id)}
+      onKeyDown={(ev) => { if (ev.key === "Enter") onOpen(c.id); }}
+      className="cv-row group flex cursor-pointer items-center gap-3 border-b border-line2 px-4 py-3 outline-none transition-colors last:border-b-0 hover:bg-panel2/60 focus-visible:bg-panel2/60"
+    >
+      <Avatar name={c.name} vip={e.isVip} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="truncate font-display text-[14.5px] font-bold tracking-tight text-ink">{c.name}</span>
+          {e.isVip && <Pill tone="violet" icon={Crown}>VIP</Pill>}
+        </div>
+        <div className="mt-0.5 truncate text-[12px] text-ink3">{c.phone || c.email || "No contact info"}</div>
+      </div>
+      <div className="hidden w-24 flex-none text-right sm:block">
+        <div className="font-display text-[14px] font-bold tnum text-ink">{moneyShort(e.spent)}</div>
+        <div className="text-[10.5px] text-ink3">lifetime</div>
+      </div>
+      <div className="hidden w-20 flex-none text-right md:block">
+        <div className="font-display text-[14px] font-bold tnum text-ink">{e.details}</div>
+        <div className="text-[10.5px] text-ink3">details</div>
+      </div>
+      <div className="hidden w-24 flex-none text-right md:block">
+        <div className="text-[12.5px] font-semibold text-ink2">{whenLabel(e.lastVisit)}</div>
+        <div className="text-[10.5px] text-ink3">last visit</div>
+      </div>
+      <HealthRing value={e.health} size={38} stroke={4} />
+      <ChevronRight className="h-4 w-4 flex-none text-ink3 transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-brand-500" />
+    </motion.div>
+  );
+});
 
 /** Gradient initials avatar. Falls back from a photo if one ever exists. */
 function Avatar({ name, vip, src }: { name: string; vip: boolean; src?: string | null }) {
@@ -476,11 +657,12 @@ function Action({ icon: Icon, label, href, onClick }: {
   );
 }
 
-function CustomerCard({ e, index, onOpen, onSchedule, onInvoice }: {
+const CustomerCard = memo(function CustomerCard({ e, index, onOpen, onSchedule, onInvoice }: {
   e: Enriched; index: number;
-  onOpen: () => void; onSchedule: () => void; onInvoice: () => void;
+  onOpen: (id: string) => void; onSchedule: () => void; onInvoice: () => void;
 }) {
   const { c } = e;
+  const tier = healthTier(e.health);
   const identity = e.isVip
     ? { tone: "violet" as Tone, icon: Crown, text: "VIP" }
     : e.isNew
@@ -510,18 +692,21 @@ function CustomerCard({ e, index, onOpen, onSchedule, onInvoice }: {
       transition={{ duration: 0.34, delay: Math.min(index, 8) * 0.035, ease: [0.22, 1, 0.36, 1] }}
       role="button"
       tabIndex={0}
-      onClick={onOpen}
-      onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onOpen(); } }}
+      onClick={() => onOpen(c.id)}
+      onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onOpen(c.id); } }}
       className={cn(
-        "surface group relative flex cursor-pointer flex-col overflow-hidden rounded-[18px] p-5 text-left outline-none",
+        "cv-card surface group relative flex cursor-pointer flex-col overflow-hidden rounded-[18px] p-5 text-left outline-none",
         "transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-1 hover:shadow-lift focus-visible:ring-2 focus-visible:ring-brand-500/50",
-        e.isVip && "hover:border-violet/40",
+        e.isVip && "ring-1 ring-inset ring-violet/25 hover:border-violet/40",
         e.isInactive && "opacity-[0.94]"
       )}
     >
-      {/* VIP gets a premium top accent; everyone else stays clean. */}
+      {/* VIP gets a premium top accent + glow; everyone else stays clean. */}
       {e.isVip && (
-        <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-violet via-brand-500 to-transparent" />
+        <>
+          <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-violet via-brand-500 to-transparent" />
+          <span aria-hidden className="pointer-events-none absolute -right-10 -top-12 h-32 w-32 rounded-full bg-violet/12 blur-2xl" />
+        </>
       )}
       <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-paint-gloss opacity-30" />
 
@@ -561,6 +746,23 @@ function CustomerCard({ e, index, onOpen, onSchedule, onInvoice }: {
         <Stat icon={Clock} value={whenLabel(e.lastVisit)} label="Last visit" />
       </div>
 
+      {/* Health + intelligent insights — fills the card with useful signal */}
+      <div className="mt-3 flex items-center gap-3 rounded-2xl bg-panel2/40 px-3.5 py-2.5 ring-1 ring-inset ring-line/50">
+        <HealthRing value={e.health} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 text-[11.5px] font-semibold text-ink">
+            <Gauge className={cn("h-3.5 w-3.5", TONE[tier.tone].text)} />Health · {tier.label}
+          </div>
+          <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-ink3">
+            {e.avgSpend > 0 && <span>Avg ticket <b className="font-semibold text-ink2">{moneyShort(e.avgSpend)}</b></span>}
+            {e.favoriteService && <span>Books <b className="font-semibold text-ink2">{e.favoriteService}</b></span>}
+            {e.estNextDays != null && (
+              <span>{e.estNextDays <= 0 ? <b className="font-semibold text-warning">Due to rebook</b> : <>~<b className="font-semibold text-ink2">{e.estNextDays}d</b> to rebook</>}</span>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* Context line */}
       {context && (
         <div className="mt-3 flex items-center gap-1.5 truncate text-[12px]">
@@ -575,11 +777,11 @@ function CustomerCard({ e, index, onOpen, onSchedule, onInvoice }: {
         {c.email && <Action icon={Mail} label="Email" href={`mailto:${c.email}`} />}
         <Action icon={CalendarPlus} label="Schedule" onClick={onSchedule} />
         <Action icon={Receipt} label="Invoice" onClick={onInvoice} />
-        <Action icon={UserRound} label="View profile" onClick={onOpen} />
+        <Action icon={UserRound} label="View profile" onClick={() => onOpen(c.id)} />
         <span className="ml-auto whitespace-nowrap text-[11px] text-ink3">
           Since {monthYear(c.created_at)}
         </span>
       </div>
     </motion.div>
   );
-}
+});

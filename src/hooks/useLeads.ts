@@ -103,9 +103,10 @@ export function useLeads() {
   const remove = async (id: string) => {
     demoGuard();
     if (!supabase) throw new Error("Not available.");
+    const prev = leads; // snapshot for rollback
+    setLeads((ls) => ls.filter((x) => x.id !== id)); // optimistic
     const { error } = await supabase.from("leads").delete().eq("id", id);
-    if (error) throw new Error(error.message);
-    setLeads((ls) => ls.filter((x) => x.id !== id));
+    if (error) { setLeads(prev); throw new Error(error.message); }
   };
 
   /**
