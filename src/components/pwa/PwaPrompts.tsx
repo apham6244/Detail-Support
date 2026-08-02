@@ -163,9 +163,8 @@ function InstallPrompt() {
         >
           <div className="surface surface-raised overflow-hidden rounded-2xl p-4">
             <div className="flex items-start gap-3">
-              <span className="flex h-12 w-12 flex-none items-center justify-center rounded-2xl bg-carbon-900 shadow-card">
-                <DSIcon size={30} />
-              </span>
+              <DSIcon size={48} className="shadow-card" />
+
               <div className="min-w-0 flex-1">
                 <p className="text-[14px] font-bold text-ink">Install Detail Support</p>
                 <p className="mt-0.5 text-[12.5px] leading-snug text-ink3">
