@@ -4,11 +4,12 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   ArrowLeft, Phone, Mail, MapPin, Car, Trash2, Pencil, Plus,
-  DollarSign, CalendarCheck, CalendarClock, X as XIcon, Wrench,
+  DollarSign, CalendarCheck, CalendarClock, Clock, X as XIcon, Wrench,
   MessageSquare, ReceiptText, Image as ImageIcon, UserPlus, XCircle,
-  Crown, Award, Star, StickyNote,
+  Crown, Award, Star, StickyNote, Gauge, type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { CountUp } from "@/components/ui/CountUp";
 import { Modal, Field } from "@/components/ui/Modal";
 import { IconBtn, SignInPrompt, money } from "@/components/ui/data";
 import { confirm, toast } from "@/components/ui/feedback";
@@ -42,6 +43,11 @@ const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 const fmtDateTime = (iso: string) =>
   new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+const fmtMonYear = (iso: string) =>
+  new Date(iso).toLocaleDateString(undefined, { month: "short", year: "numeric" });
+const moneyShort = (n: number) => (n >= 1000 ? `$${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : money(n));
+const relDay = (daysSince: number | null, last: string | null) =>
+  last == null ? "—" : daysSince === 0 ? "Today" : daysSince === 1 ? "Yesterday" : fmtDate(last);
 
 const collected = (i: { status: string; total: number; deposit_amount: number }) =>
   i.status === "paid" ? i.total : i.status === "deposit_paid" ? i.deposit_amount : 0;
@@ -112,7 +118,7 @@ export default function CustomerDetail() {
     const visits = done.length;
     const avgTicket = visits ? spent / visits : 0;
 
-    const tier: { label: string; tone: Tone; icon: typeof Crown } =
+    const tier: { label: string; tone: Tone; icon: LucideIcon } =
       spent >= 1500 || visits >= 10
         ? { label: "VIP", tone: "purple", icon: Crown }
         : spent >= 600 || visits >= 5
@@ -121,7 +127,29 @@ export default function CustomerDetail() {
             ? { label: "Silver", tone: "blue", icon: Star }
             : { label: "New", tone: "green", icon: UserPlus };
 
-    return { spent, visits, appointments: history.length, last, daysSince, upcoming, avgTicket, tier };
+    // Most-booked service.
+    const counts = new Map<string, number>();
+    for (const a of history) { const n = a.service?.name; if (n) counts.set(n, (counts.get(n) ?? 0) + 1); }
+    let favorite: string | null = null; let favN = 0;
+    for (const [n, c] of counts) if (c > favN) { favN = c; favorite = n; }
+
+    // Visit cadence — average days between completed visits.
+    const t = done.map((a) => new Date(a.scheduled_at).getTime()).sort((x, y) => x - y);
+    let cadence: number | null = null;
+    if (t.length >= 2) { let s = 0; for (let i = 1; i < t.length; i++) s += (t[i] - t[i - 1]) / 86_400_000; cadence = Math.round(s / (t.length - 1)); }
+
+    // Lightweight relationship health — recency measured against their own rhythm.
+    const health: { label: string; tone: Tone; score: number | null } =
+      visits === 0 ? { label: "New", tone: "blue", score: null }
+        : (() => {
+          const cad = cadence ?? 45; const ds = daysSince ?? 0;
+          if (ds <= cad) return { label: "Excellent", tone: "green" as Tone, score: 94 };
+          if (ds <= cad * 2) return { label: "Good", tone: "green" as Tone, score: 78 };
+          if (ds <= cad * 3) return { label: "At risk", tone: "orange" as Tone, score: 46 };
+          return { label: "Dormant", tone: "red" as Tone, score: 24 };
+        })();
+
+    return { spent, visits, appointments: history.length, last, daysSince, upcoming, avgTicket, tier, favorite, cadence, health };
   }, [myInvoices, history]);
 
   if (!ready) return <SignInPrompt what="customers" />;
@@ -177,60 +205,73 @@ export default function CustomerDetail() {
     <div className="animate-fade-up">
       <BackLink />
 
-      {/* ---- Header: identity, status, contact & primary actions --------- */}
-      <section className="surface relative mb-4 mt-3 overflow-hidden rounded-2xl">
-        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-20 bg-paint-gloss opacity-25" />
+      {/* ---- Header: identity + iOS-style quick actions ------------------ */}
+      <motion.section
+        initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+        className="surface relative mt-3 overflow-hidden rounded-2xl"
+      >
+        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-20 bg-paint-gloss opacity-20" />
         <div className="relative p-5 sm:p-6">
           <div className="flex items-start gap-4">
-            <div className="flex h-14 w-14 flex-none items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-violet text-[19px] font-bold uppercase text-white shadow-glow sm:h-16 sm:w-16 sm:text-[21px]">
+            <div className="flex h-14 w-14 flex-none items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-violet text-[19px] font-bold uppercase text-white shadow-glow sm:h-[60px] sm:w-[60px] sm:text-[21px]">
               {initials(customer.name)}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
-                <h1 className="text-[21px] font-bold leading-tight tracking-tight sm:text-[24px]">{customer.name}</h1>
-                <span className={cn("inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.06em] ring-1 ring-inset", TONE[p.tier.tone].chip)}>
+              {/* Name is the focal point; VIP pill sits attached, soft and small. */}
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <h1 className="text-[22px] font-bold leading-tight tracking-tight text-ink">{customer.name}</h1>
+                <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-semibold ring-1 ring-inset", TONE[p.tier.tone].chip)}>
                   <p.tier.icon className="h-3 w-3" />{p.tier.label}
                 </span>
               </div>
-              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[13px] text-ink2">
-                {customer.phone && <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5 text-ink3" />{customer.phone}</span>}
-                {customer.email && <span className="flex min-w-0 items-center gap-1.5"><Mail className="h-3.5 w-3.5 flex-none text-ink3" /><span className="truncate">{customer.email}</span></span>}
-                {customer.address && <span className="flex min-w-0 items-center gap-1.5"><MapPin className="h-3.5 w-3.5 flex-none text-ink3" /><span className="truncate">{customer.address}</span></span>}
-                {!customer.phone && !customer.email && !customer.address && <span className="text-ink3">No contact details yet</span>}
+              {/* Contact — quieter: muted, smaller, generous spacing. */}
+              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px] text-ink3">
+                {customer.phone && <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5" />{customer.phone}</span>}
+                {customer.email && <span className="flex min-w-0 items-center gap-1.5"><Mail className="h-3.5 w-3.5 flex-none" /><span className="truncate">{customer.email}</span></span>}
+                {customer.address && <span className="flex min-w-0 items-center gap-1.5"><MapPin className="h-3.5 w-3.5 flex-none" /><span className="truncate">{customer.address}</span></span>}
+                {!customer.phone && !customer.email && !customer.address && <span>No contact details yet</span>}
               </div>
-              <div className="mt-1.5 text-[12px] text-ink3">Customer since {fmtDate(customer.created_at)}</div>
             </div>
-            {canManage && (
-              <IconBtn label="Delete customer" danger
-                onClick={async () => {
-                  if (!(await confirm({ title: `Delete ${customer.name}?`, body: "Their vehicles, jobs and photos are permanently removed too. This can't be undone.", confirmLabel: "Delete customer", tone: "danger" }))) return;
-                  try { await remove(customer.id); toast.success(`${customer.name} deleted`); navigate("/customers"); }
-                  catch (e) { toast.error((e as Error).message); }
-                }}>
-                <Trash2 className="h-4 w-4" />
-              </IconBtn>
-            )}
+            <div className="flex flex-none items-center gap-2">
+              {p.upcoming && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.05em] text-success ring-1 ring-inset ring-success/25">
+                  <CalendarCheck className="h-3 w-3" /> Booked
+                </span>
+              )}
+              {canManage && (
+                <IconBtn label="Delete customer" danger
+                  onClick={async () => {
+                    if (!(await confirm({ title: `Delete ${customer.name}?`, body: "Their vehicles, jobs and photos are permanently removed too. This can't be undone.", confirmLabel: "Delete customer", tone: "danger" }))) return;
+                    try { await remove(customer.id); toast.success(`${customer.name} deleted`); navigate("/customers"); }
+                    catch (e) { toast.error((e as Error).message); }
+                  }}>
+                  <Trash2 className="h-4 w-4" />
+                </IconBtn>
+              )}
+            </div>
           </div>
 
-          {/* actions — primary Book, then contact & management */}
-          <div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">
-            {canManage && <QuickAction icon={Plus} label="Book appointment" onClick={() => navigate("/appointments")} primary />}
-            <QuickAction icon={Phone} label="Call" href={customer.phone ? `tel:${customer.phone}` : undefined} />
-            <QuickAction icon={MessageSquare} label="Text" href={customer.phone ? `sms:${customer.phone}` : undefined} />
-            <QuickAction icon={Mail} label="Email" href={customer.email ? `mailto:${customer.email}` : undefined} />
-            {canManage && <QuickAction icon={ReceiptText} label="Create invoice" onClick={() => navigate("/invoices")} />}
-            {canManage && <QuickAction icon={Pencil} label="Edit" onClick={openEdit} />}
+          {/* Bottom action bar — bare icon circles + relationship age */}
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-x-3 gap-y-3 border-t border-line pt-4">
+            <div className="flex items-center gap-2.5">
+              <ActionCircle icon={Phone} label="Call" href={customer.phone ? `tel:${customer.phone}` : undefined} />
+              <ActionCircle icon={MessageSquare} label="Text" href={customer.phone ? `sms:${customer.phone}` : undefined} />
+              <ActionCircle icon={Mail} label="Email" href={customer.email ? `mailto:${customer.email}` : undefined} />
+              {canManage && <ActionCircle icon={Plus} label="Book appointment" onClick={() => navigate("/appointments")} />}
+              {canManage && <ActionCircle icon={ReceiptText} label="Create invoice" onClick={() => navigate("/invoices")} />}
+              {canManage && <ActionCircle icon={Pencil} label="Edit" onClick={openEdit} />}
+            </div>
+            <span className="text-[12px] text-ink3">Since <span className="font-semibold text-ink2">{fmtMonYear(customer.created_at)}</span></span>
           </div>
         </div>
-      </section>
+      </motion.section>
 
-      {/* ---- Four key stats --------------------------------------------- */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard icon={DollarSign} tone="green" label="Lifetime value" value={money(p.spent)} sub={p.visits ? `${money(p.avgTicket)} avg ticket` : "No revenue yet"} />
-        <StatCard icon={CalendarCheck} tone="blue" label="Total visits" value={String(p.visits)} sub={`${p.appointments} appointment${p.appointments === 1 ? "" : "s"}`} />
-        <StatCard icon={Wrench} tone="purple" label="Last appointment" value={p.last ? fmtDate(p.last) : "None yet"} sub={p.daysSince !== null ? `${p.daysSince} day${p.daysSince === 1 ? "" : "s"} ago` : "No visits yet"} />
-        <StatCard icon={CalendarClock} tone="orange" label="Next appointment" value={p.upcoming ? fmtDate(p.upcoming.scheduled_at) : "Not booked"} sub={p.upcoming ? "Upcoming" : "Nothing scheduled"} />
-      </div>
+      {/* ---- Next appointment — the standout status ---------------------- */}
+      <NextAppointmentCard upcoming={p.upcoming} canManage={canManage} onBook={() => navigate("/appointments")} />
+
+      {/* ---- Lifetime stats — one clean, scannable row ------------------- */}
+      <StatsRow vehicles={vehicles.length} details={p.visits} spent={p.spent} last={p.last} daysSince={p.daysSince} />
 
       {/* ---- Tabs -------------------------------------------------------- */}
       <div className="mt-6 border-b border-line">
@@ -272,6 +313,7 @@ export default function CustomerDetail() {
             gated={gatedHistory}
             canManage={canManage}
             onEditNote={() => setTab("notes")}
+            insights={{ health: p.health, avgTicket: p.avgTicket, favorite: p.favorite, cadence: p.cadence, visits: p.visits }}
           />
         )}
         {tab === "appointments" && (
@@ -339,17 +381,25 @@ export default function CustomerDetail() {
 
 /* ---------------------------------------------------------------- tones */
 
-type Tone = "green" | "blue" | "purple" | "orange";
+type Tone = "green" | "blue" | "purple" | "orange" | "red";
 const TONE: Record<Tone, { bubble: string; chip: string }> = {
   green:  { bubble: "bg-success/12 text-success",     chip: "bg-success/12 text-success ring-success/25" },
   blue:   { bubble: "bg-brand-500/12 text-brand-500", chip: "bg-brand-500/12 text-brand-500 ring-brand-500/25" },
   purple: { bubble: "bg-violet/12 text-violet",       chip: "bg-violet/12 text-violet ring-violet/25" },
   orange: { bubble: "bg-warning/12 text-warning",     chip: "bg-warning/12 text-warning ring-warning/25" },
+  red:    { bubble: "bg-danger/12 text-danger",       chip: "bg-danger/12 text-danger ring-danger/25" },
 };
+const TONE_TEXT: Record<Tone, string> = { green: "text-success", blue: "text-brand-500", purple: "text-violet", orange: "text-warning", red: "text-danger" };
+const TONE_HEX: Record<Tone, string> = { green: "#17A867", blue: "#2E7BFF", purple: "#7A5BE0", orange: "#E08A00", red: "#E1483C" };
 
 /* -------------------------------------------------------------- tabs */
 
-function OverviewTab({ createdAt, history, invoices, photos, notes, gated, canManage, onEditNote }: {
+type Insights = {
+  health: { label: string; tone: Tone; score: number | null };
+  avgTicket: number; favorite: string | null; cadence: number | null; visits: number;
+};
+
+function OverviewTab({ createdAt, history, invoices, photos, notes, gated, canManage, onEditNote, insights }: {
   createdAt: string;
   history: Appointment[];
   invoices: { id: string; number: string | null; status: string; total: number; issued_at: string; created_at: string }[];
@@ -358,10 +408,13 @@ function OverviewTab({ createdAt, history, invoices, photos, notes, gated, canMa
   gated: boolean;
   canManage: boolean;
   onEditNote: () => void;
+  insights: Insights;
 }) {
   const completed = history.filter((a) => a.status === "completed");
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="flex flex-col gap-4">
+      <InsightsCard {...insights} />
+      <div className="grid gap-4 lg:grid-cols-2">
       <Panel title="Recent activity" subtitle="Newest first">
         {gated ? (
           <FeatureLocked feature="customer_history" title="Activity history" description="See every past job, invoice and update on one timeline." compact />
@@ -404,6 +457,7 @@ function OverviewTab({ createdAt, history, invoices, photos, notes, gated, canMa
             </button>
           )}
         </Panel>
+      </div>
       </div>
     </div>
   );
@@ -587,37 +641,130 @@ function InvoiceBadge({ status }: { status: string }) {
 /** A quick action. Renders as a link for tel:/sms:/mailto:, a button otherwise.
  *  Disabled (not hidden) when the customer has no phone/email, so the row's
  *  shape stays stable and it's obvious what's missing. */
-function QuickAction({ icon: Icon, label, href, onClick, primary }: {
-  icon: typeof Phone; label: string; href?: string; onClick?: () => void; primary?: boolean;
+/** A bare icon-circle action (iOS action-bar style). Link for tel:/sms:/mailto:,
+ *  button otherwise; dimmed + inert when the contact detail is missing. */
+function ActionCircle({ icon: Icon, label, href, onClick }: {
+  icon: LucideIcon; label: string; href?: string; onClick?: () => void;
 }) {
+  const enabled = Boolean(href || onClick);
   const cls = cn(
-    "inline-flex min-h-[40px] items-center gap-1.5 rounded-lg px-3 py-2 text-[12.5px] font-semibold transition-colors active:scale-[0.97]",
-    primary
-      ? "bg-brand-500 text-white shadow-glow hover:brightness-[1.06]"
-      : "bg-panel2 text-ink2 ring-1 ring-inset ring-line hover:bg-line2 hover:text-ink"
+    "flex h-10 w-10 items-center justify-center rounded-full ring-1 ring-inset transition-[transform,background-color,color,box-shadow,border-color] duration-150 ease-out",
+    enabled
+      ? "bg-panel text-ink2 ring-line hover:-translate-y-0.5 hover:bg-panel2 hover:text-brand-500 hover:ring-brand-500/40 hover:shadow-card active:scale-95"
+      : "cursor-not-allowed bg-panel/60 text-ink3/40 ring-line"
   );
-  if (href) return <a href={href} className={cls}><Icon className="h-4 w-4" />{label}</a>;
-  if (onClick) return <button onClick={onClick} className={cls}><Icon className="h-4 w-4" />{label}</button>;
+  const icon = <Icon className="h-[18px] w-[18px]" />;
+  if (href) return <a href={href} aria-label={label} title={label} className={cls}>{icon}</a>;
+  if (onClick) return <button type="button" onClick={onClick} aria-label={label} title={label} className={cls}>{icon}</button>;
+  return <span aria-disabled aria-label={label} title={`No ${label.toLowerCase()} on file`} className={cls}>{icon}</span>;
+}
+
+/** The #2 element in the hierarchy: a calm status card that turns green only
+ *  when there's actually an upcoming visit. */
+function NextAppointmentCard({ upcoming, canManage, onBook }: {
+  upcoming: { scheduled_at: string; service?: { name: string } | null } | null; canManage: boolean; onBook: () => void;
+}) {
   return (
-    <span className={cn(cls, "cursor-not-allowed opacity-45")} title={`No ${label.toLowerCase()} on file`}>
-      <Icon className="h-4 w-4" />{label}
-    </span>
+    <motion.div
+      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, delay: 0.05, ease: [0.22, 1, 0.36, 1] }}
+      className={cn("surface mt-4 flex items-center gap-4 rounded-2xl p-4 sm:p-5", upcoming && "ring-1 ring-inset ring-success/25")}
+    >
+      <span className={cn("flex h-11 w-11 flex-none items-center justify-center rounded-xl", upcoming ? "bg-success/12 text-success" : "bg-line2 text-ink3")}>
+        <CalendarClock className="h-5 w-5" />
+      </span>
+      <div className="min-w-0 flex-1">
+        {upcoming ? (
+          <>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-semibold text-success ring-1 ring-inset ring-success/20">
+              <span className="h-1.5 w-1.5 rounded-full bg-success" /> Upcoming appointment
+            </span>
+            <div className="mt-1.5 truncate text-[15px] font-bold text-ink">
+              {fmtDate(upcoming.scheduled_at)}{upcoming.service?.name ? ` · ${upcoming.service.name}` : ""}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="text-[13.5px] font-semibold text-ink2">No upcoming appointment</div>
+            <div className="mt-0.5 text-[12px] text-ink3">Book their next detail to keep the rhythm going.</div>
+          </>
+        )}
+      </div>
+      {!upcoming && canManage && (
+        <button onClick={onBook} className="inline-flex h-9 flex-none items-center gap-1.5 rounded-lg bg-brand-500/10 px-3 text-[12.5px] font-semibold text-brand-500 transition-colors hover:bg-brand-500/15 active:scale-[0.97]">
+          <Plus className="h-4 w-4" /> Book
+        </button>
+      )}
+    </motion.div>
   );
 }
 
-function StatCard({ icon: Icon, tone, label, value, sub }: {
-  icon: typeof DollarSign; tone: Tone; label: string; value: string; sub: string;
+/** Lifetime stats in one card — small icon+label on top, big value below,
+ *  hairline dividers. Numbers count up on open. */
+function StatsRow({ vehicles, details, spent, last, daysSince }: {
+  vehicles: number; details: number; spent: number; last: string | null; daysSince: number | null;
 }) {
   return (
-    <div className="surface rounded-2xl p-4 transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-lift">
-      <div className="flex items-center gap-2">
-        <span className={cn("flex h-7 w-7 flex-none items-center justify-center rounded-lg", TONE[tone].bubble)}>
-          <Icon className="h-3.5 w-3.5" />
-        </span>
-        <span className="truncate text-[10.5px] font-semibold uppercase tracking-[0.06em] text-ink3">{label}</span>
+    <motion.div
+      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
+      className="surface mt-4 overflow-hidden rounded-2xl"
+    >
+      <div className="grid grid-cols-2 divide-x divide-y divide-line sm:grid-cols-4 sm:divide-y-0">
+        <StatCell icon={Car} label="Vehicles"><CountUp value={vehicles} /></StatCell>
+        <StatCell icon={Wrench} label="Details"><CountUp value={details} /></StatCell>
+        <StatCell icon={DollarSign} label="Spent"><CountUp value={spent} format={moneyShort} /></StatCell>
+        <StatCell icon={Clock} label="Last visit">{relDay(daysSince, last)}</StatCell>
       </div>
-      <div className="mt-2.5 truncate font-display text-[19px] font-bold leading-none tracking-tight tnum text-ink">{value}</div>
-      <div className="mt-1.5 truncate text-[11px] text-ink3">{sub}</div>
+    </motion.div>
+  );
+}
+
+function StatCell({ icon: Icon, label, children }: { icon: LucideIcon; label: string; children: React.ReactNode }) {
+  return (
+    <div className="p-4 sm:p-5">
+      <div className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.06em] text-ink3">
+        <Icon className="h-3.5 w-3.5" />{label}
+      </div>
+      <div className="mt-2 truncate font-display text-[20px] font-bold leading-none tracking-tight tnum text-ink sm:text-[22px]">{children}</div>
+    </div>
+  );
+}
+
+/** A compact health ring — the score in a tone-coloured dial. */
+function HealthRing({ score, tone }: { score: number | null; tone: Tone }) {
+  const r = 22; const c = 2 * Math.PI * r;
+  const off = c * (1 - Math.max(0, Math.min(100, score ?? 0)) / 100);
+  return (
+    <div className="relative h-14 w-14 flex-none">
+      <svg viewBox="0 0 56 56" className="h-full w-full -rotate-90">
+        <circle cx="28" cy="28" r={r} fill="none" strokeWidth="5" className="stroke-line2" />
+        <circle cx="28" cy="28" r={r} fill="none" strokeWidth="5" strokeLinecap="round"
+          stroke={TONE_HEX[tone]} strokeDasharray={c} strokeDashoffset={off}
+          style={{ transition: "stroke-dashoffset 900ms cubic-bezier(0.22,1,0.36,1)" }} />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center font-display text-[15px] font-bold tnum text-ink">{score ?? "–"}</div>
+    </div>
+  );
+}
+
+/** Supporting insights — a health dial with a one-line summary beside it. */
+function InsightsCard({ health, avgTicket, favorite, cadence, visits }: Insights) {
+  return (
+    <div className="surface rounded-2xl p-5 sm:p-6">
+      <div className="flex items-center gap-4">
+        <HealthRing score={health.score} tone={health.tone} />
+        <div className="min-w-0">
+          <div className={cn("flex items-center gap-1.5 text-[14.5px] font-bold tracking-tight", TONE_TEXT[health.tone])}>
+            <Gauge className="h-4 w-4" /> Health · {health.label}
+          </div>
+          <div className="mt-1 text-[12.5px] leading-relaxed text-ink3">
+            {visits ? <>Avg ticket <b className="font-semibold text-ink2">{money(avgTicket)}</b></> : "No visits yet"}
+            {favorite && <> · Books <b className="font-semibold text-ink2">{favorite}</b></>}
+            {cadence ? <> · every <b className="font-semibold text-ink2">{cadence}d</b></> : null}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
