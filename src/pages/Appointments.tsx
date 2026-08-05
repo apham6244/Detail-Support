@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import {
   Plus, Trash2, UserRound, ChevronLeft, ChevronRight,
   Clock, Bell, BellPlus, Car, Wrench, StickyNote, Send, AlertTriangle,
+  Eye, Pencil, Copy, MessageSquare, Navigation, DollarSign, CalendarCheck, Hourglass,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
@@ -40,6 +41,28 @@ const statusDot: Record<AppointmentStatus, string> = {
   scheduled: "bg-brand-500", confirmed: "bg-violet", in_progress: "bg-warning",
   completed: "bg-success", cancelled: "bg-ink3", no_show: "bg-danger",
 };
+
+/* Consistent service colour system — a light tint + coloured left border + a
+   subtle tinted icon per service type. Never a solid-colour card. */
+type SvcTone = "blue" | "green" | "orange" | "purple" | "gray";
+const SVC_TONE: Record<SvcTone, { borderL: string; bg: string; icon: string }> = {
+  blue:   { borderL: "border-l-brand-500", bg: "bg-brand-500/[0.05]", icon: "text-brand-500" },
+  green:  { borderL: "border-l-success",   bg: "bg-success/[0.06]",   icon: "text-success" },
+  orange: { borderL: "border-l-warning",   bg: "bg-warning/[0.06]",   icon: "text-warning" },
+  purple: { borderL: "border-l-violet",    bg: "bg-violet/[0.06]",    icon: "text-violet" },
+  gray:   { borderL: "border-l-ink3/40",   bg: "bg-panel2",           icon: "text-ink3" },
+};
+function serviceTone(name?: string | null): SvcTone {
+  const n = (name ?? "").toLowerCase();
+  if (n.includes("interior")) return "green";
+  if (n.includes("ceramic") || n.includes("coating")) return "purple";
+  if (n.includes("maintenance")) return "gray";
+  if (n.includes("exterior") || n.includes("paint") || n.includes("correction") || n.includes("wash")) return "orange";
+  if (n.includes("full") || n.includes("detail")) return "blue";
+  return "gray";
+}
+const endTime = (iso: string, mins?: number | null) =>
+  time(new Date(new Date(iso).getTime() + (mins ?? 60) * 60_000).toISOString());
 
 const DAY = 86_400_000;
 const key = (d: Date | string) => (typeof d === "string" ? d.slice(0, 10) : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
@@ -94,6 +117,16 @@ export default function Appointments() {
     return m;
   }, [appointments]);
 
+  const custById = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers]);
+
+  // Compact "today" workload for the header stat row (real today, not the cursor).
+  const todayStats = useMemo(() => {
+    const list = (byDay.get(key(new Date())) ?? []).filter((a) => a.status !== "cancelled" && a.status !== "no_show");
+    const bookedH = list.reduce((s, a) => s + (a.duration_min ?? 60), 0) / 60;
+    const revenue = list.reduce((s, a) => s + (a.price ?? 0), 0);
+    return { jobs: list.length, bookedH, openH: Math.max(0, 10 - bookedH), revenue };
+  }, [byDay]);
+
   // Double-booking guard: the first active appointment whose time window overlaps
   // the one being booked/edited. Non-blocking — a shop with two bays can override.
   const conflict = useMemo(() => {
@@ -123,6 +156,22 @@ export default function Appointments() {
 
   const openEdit = (a: Appointment) => {
     setEditing(a);
+    setCustomerId(a.customer_id);
+    setVehicleId(a.vehicle_id ?? "");
+    setServiceId(a.service_id ?? "");
+    setWhen(toLocalInput(new Date(a.scheduled_at)));
+    setDuration(String(a.duration_min ?? 60));
+    setPrice(a.price != null ? String(a.price) : "");
+    setNotes(a.notes ?? "");
+    setError(null);
+    setDetail(null);
+    setFormOpen(true);
+  };
+
+  // Duplicate → open the booking form pre-filled as a NEW job (same details,
+  // adjustable time) rather than silently cloning into an overlap.
+  const openDuplicate = (a: Appointment) => {
+    setEditing(null);
     setCustomerId(a.customer_id);
     setVehicleId(a.vehicle_id ?? "");
     setServiceId(a.service_id ?? "");
@@ -184,6 +233,14 @@ export default function Appointments() {
         actions={isManager ? <Button variant="primary" icon={<Plus />} onClick={() => openNew()}>Book job</Button> : undefined}
       />
 
+      {/* Today at a glance */}
+      <div className="mb-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4 sm:gap-3">
+        <StatCard icon={CalendarCheck} tone="blue" label="Today's jobs" value={String(todayStats.jobs)} />
+        <StatCard icon={Hourglass} tone="purple" label="Booked hours" value={`${todayStats.bookedH % 1 ? todayStats.bookedH.toFixed(1) : todayStats.bookedH}h`} />
+        <StatCard icon={Clock} tone="green" label="Open hours" value={`${todayStats.openH % 1 ? todayStats.openH.toFixed(1) : todayStats.openH}h`} />
+        <StatCard icon={DollarSign} tone="orange" label="Revenue today" value={money(todayStats.revenue)} />
+      </div>
+
       {/* Controls — wrap on mobile */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="flex rounded-lg bg-panel2 p-1 text-[12.5px] font-semibold">
@@ -207,7 +264,7 @@ export default function Appointments() {
       {loading ? <PageSkeleton variant="calendar" header={false} /> : (
         <>
           {view === "month" && <MonthView cursor={cursor} byDay={byDay} onDay={(d) => { setCursor(d); setView("day"); }} onPick={setDetail} />}
-          {view === "week" && <WeekView cursor={cursor} byDay={byDay} onPick={setDetail} onAdd={isManager ? openNew : undefined} />}
+          {view === "week" && <WeekView cursor={cursor} byDay={byDay} onPick={setDetail} onEdit={isManager ? openEdit : undefined} onDuplicate={isManager ? openDuplicate : undefined} onAdd={isManager ? openNew : undefined} custById={custById} />}
           {view === "day" && <DayView cursor={cursor} byDay={byDay} onPick={setDetail} onAdd={isManager ? openNew : undefined} />}
           {view === "list" && (
             appointments.length === 0 ? (
@@ -391,47 +448,127 @@ function MonthView({ cursor, byDay, onDay, onPick }: {
   );
 }
 
-function WeekView({ cursor, byDay, onPick, onAdd }: {
-  cursor: Date; byDay: Map<string, Appointment[]>; onPick: (a: Appointment) => void; onAdd?: (d: Date) => void;
+type CustLite = { name: string; phone?: string | null; address?: string | null };
+
+function WeekView({ cursor, byDay, onPick, onEdit, onDuplicate, onAdd, custById }: {
+  cursor: Date; byDay: Map<string, Appointment[]>;
+  onPick: (a: Appointment) => void; onEdit?: (a: Appointment) => void; onDuplicate?: (a: Appointment) => void;
+  onAdd?: (d: Date) => void; custById: Map<string, CustLite>;
 }) {
   const s = startOfWeek(cursor);
   const days = Array.from({ length: 7 }, (_, i) => new Date(s.getTime() + i * DAY));
-  const today = new Date();
+  const now = new Date();
+  const nowLabel = time(now.toISOString());
   return (
     <div className="grid overflow-hidden rounded-xl border border-line max-sm:divide-y max-sm:divide-line sm:grid-cols-7 sm:divide-x sm:divide-line">
       {days.map((d) => {
         const list = byDay.get(key(d)) ?? [];
-        const isToday = sameDay(d, today);
+        const isToday = sameDay(d, now);
         return (
-          <div key={key(d)} className={cn("p-2.5", isToday && "bg-brand-500/[0.04]")}>
-            <div className="mb-2 flex items-center justify-between">
-              <div>
-                <div className="text-[10.5px] font-semibold uppercase text-ink3">{d.toLocaleDateString(undefined, { weekday: "short" })}</div>
-                <div className={cn("text-[15px] font-bold", isToday && "text-brand-500")}>{d.getDate()}</div>
+          <div key={key(d)}
+            onClick={onAdd ? () => onAdd(new Date(d)) : undefined}
+            className={cn("flex min-h-[150px] flex-col p-2.5 sm:min-h-[220px]", isToday && "bg-brand-500/[0.03]", onAdd && "cursor-pointer")}>
+            {/* Day header — weekday, date, workload */}
+            <div className="mb-2 px-0.5">
+              <div className={cn("text-[10.5px] font-semibold uppercase tracking-wide", isToday ? "text-brand-500" : "text-ink3")}>
+                {d.toLocaleDateString(undefined, { weekday: "short" })}
               </div>
-              {onAdd && (
-                <button onClick={() => onAdd(new Date(d))} aria-label="Book on this day"
-                  className="flex h-6 w-6 items-center justify-center rounded text-ink3 hover:bg-line2 hover:text-brand-500">
-                  <Plus className="h-3.5 w-3.5" />
-                </button>
-              )}
+              <div className="flex items-baseline gap-1.5">
+                <span className={cn("text-[18px] font-bold leading-none tracking-tight", isToday && "text-brand-500")}>{d.getDate()}</span>
+                {list.length > 0 && <span className="text-[11px] text-ink3">{list.length} job{list.length === 1 ? "" : "s"}</span>}
+              </div>
             </div>
-            <div className="flex flex-col gap-1.5">
-              {list.length === 0 ? <span className="px-1 py-2 text-[11px] text-ink3">—</span> :
-                list.map((a) => (
-                  <button key={a.id} onClick={() => onPick(a)}
-                    className="rounded-lg bg-panel2 p-1.5 text-left transition-colors hover:bg-brand-500/10">
-                    <div className="flex items-center gap-1">
-                      <span className={cn("h-1.5 w-1.5 flex-none rounded-full", statusDot[a.status])} />
-                      <span className="truncate text-[11px] font-semibold">{time(a.scheduled_at)}</span>
-                    </div>
-                    <div className="truncate text-[11.5px] text-ink2">{a.customer?.name ?? "Customer"}</div>
-                  </button>
+
+            {/* Current-time marker on today */}
+            {isToday && (
+              <div className="mb-1.5 flex items-center gap-1.5" aria-label={`Current time ${nowLabel}`}>
+                <span className="h-1.5 w-1.5 flex-none rounded-full bg-danger" />
+                <span className="h-px flex-1 bg-danger/40" />
+                <span className="text-[9.5px] font-semibold tabular-nums text-danger">{nowLabel}</span>
+              </div>
+            )}
+
+            {list.length === 0 ? (
+              <button
+                onClick={onAdd ? (e) => { e.stopPropagation(); onAdd(new Date(d)); } : undefined}
+                disabled={!onAdd}
+                className="mt-0.5 flex flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed border-line2 py-5 text-center text-[11px] text-ink3 transition-colors hover:border-brand-500/40 hover:text-brand-500 disabled:cursor-default disabled:hover:border-line2 disabled:hover:text-ink3"
+              >
+                <span>No appointments</span>
+                {onAdd && <span className="font-semibold text-brand-500">Book one</span>}
+              </button>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                {list.map((a) => (
+                  <WeekCard key={a.id} a={a} onPick={onPick} onEdit={onEdit} onDuplicate={onDuplicate} cust={custById.get(a.customer_id)} />
                 ))}
-            </div>
+              </div>
+            )}
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function WeekCard({ a, onPick, onEdit, onDuplicate, cust }: {
+  a: Appointment; onPick: (a: Appointment) => void; onEdit?: (a: Appointment) => void;
+  onDuplicate?: (a: Appointment) => void; cust?: CustLite;
+}) {
+  const t = SVC_TONE[serviceTone(a.service?.name)];
+  const open = () => onPick(a);
+  return (
+    <div
+      role="button" tabIndex={0}
+      onClick={(e) => { e.stopPropagation(); open(); }}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); open(); } }}
+      className={cn("group/card relative cursor-pointer rounded-lg border border-line border-l-[3px] p-2 outline-none transition-[transform,box-shadow] duration-150 hover:-translate-y-px hover:shadow-card focus-visible:ring-2 focus-visible:ring-brand-500/30", t.borderL, t.bg)}
+    >
+      <div className="flex items-center gap-1.5">
+        <span className={cn("h-1.5 w-1.5 flex-none rounded-full", statusDot[a.status])} />
+        <span className="truncate text-[12px] font-semibold text-ink">{a.customer?.name ?? "Customer"}</span>
+      </div>
+      {a.service?.name && (
+        <div className="mt-1 flex items-center gap-1">
+          <Car className={cn("h-3 w-3 flex-none", t.icon)} />
+          <span className="truncate text-[11px] font-medium text-ink2">{a.service.name}</span>
+        </div>
+      )}
+      {a.vehicle && <div className="mt-0.5 truncate text-[10.5px] text-ink3">{vehicleLabel(a.vehicle)}</div>}
+      <div className="mt-0.5 text-[10.5px] tabular-nums text-ink3">{time(a.scheduled_at)} – {endTime(a.scheduled_at, a.duration_min)}</div>
+      {a.status !== "scheduled" && (
+        <span className={cn("mt-1 inline-flex rounded px-1.5 py-0.5 text-[9.5px] font-semibold", statusStyle[a.status])}>{APPOINTMENT_STATUS_LABEL[a.status]}</span>
+      )}
+
+      {/* Quick actions — hidden until hover */}
+      <div className="absolute right-1 top-1 hidden max-w-[calc(100%-8px)] flex-wrap items-center justify-end gap-0.5 rounded-md bg-panel/95 p-0.5 shadow-card ring-1 ring-inset ring-line group-hover/card:flex">
+        <MiniAction icon={Eye} label="View" onClick={open} />
+        {onEdit && <MiniAction icon={Pencil} label="Edit" onClick={() => onEdit(a)} />}
+        {cust?.phone && <MiniAction icon={MessageSquare} label="Message customer" href={`sms:${cust.phone}`} />}
+        {cust?.address && <MiniAction icon={Navigation} label="Directions" href={`https://maps.google.com/?q=${encodeURIComponent(cust.address)}`} external />}
+        {onDuplicate && <MiniAction icon={Copy} label="Duplicate" onClick={() => onDuplicate(a)} />}
+      </div>
+    </div>
+  );
+}
+
+function MiniAction({ icon: Icon, label, onClick, href, external }: {
+  icon: typeof Eye; label: string; onClick?: () => void; href?: string; external?: boolean;
+}) {
+  const cls = "flex h-6 w-6 flex-none items-center justify-center rounded text-ink3 transition-colors hover:bg-line2 hover:text-ink";
+  if (href) return <a href={href} target={external ? "_blank" : undefined} rel={external ? "noreferrer" : undefined} aria-label={label} title={label} onClick={(e) => e.stopPropagation()} className={cls}><Icon className="h-3.5 w-3.5" /></a>;
+  return <button type="button" aria-label={label} title={label} onClick={(e) => { e.stopPropagation(); onClick?.(); }} className={cls}><Icon className="h-3.5 w-3.5" /></button>;
+}
+
+function StatCard({ icon: Icon, tone, label, value }: { icon: typeof Clock; tone: SvcTone; label: string; value: string }) {
+  const t = SVC_TONE[tone];
+  return (
+    <div className="surface rounded-xl p-3">
+      <div className="flex items-center gap-2">
+        <span className={cn("flex h-7 w-7 flex-none items-center justify-center rounded-lg", t.bg, t.icon)}><Icon className="h-3.5 w-3.5" /></span>
+        <span className="truncate text-[10.5px] font-semibold uppercase tracking-[0.06em] text-ink3">{label}</span>
+      </div>
+      <div className="mt-2 truncate font-display text-[19px] font-bold leading-none tracking-tight tnum text-ink">{value}</div>
     </div>
   );
 }
@@ -447,22 +584,30 @@ function DayView({ cursor, byDay, onPick, onAdd }: {
     );
   }
   return (
-    <div className="divide-y divide-line2 border-y border-line">
-      {list.map((a) => (
-        <button key={a.id} onClick={() => onPick(a)} className="flex w-full items-center gap-3 px-2 py-3 text-left transition-colors hover:bg-panel2/60">
-          <div className="w-[68px] flex-none text-[13px] font-semibold">{time(a.scheduled_at)}</div>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-[13.5px] font-semibold">{a.customer?.name ?? "Customer"}</div>
-            <div className="truncate text-xs text-ink3">
-              {a.service?.name ?? "Service"}{a.vehicle ? ` · ${vehicleLabel(a.vehicle)}` : ""}
+    <div className="flex flex-col gap-2">
+      {list.map((a) => {
+        const t = SVC_TONE[serviceTone(a.service?.name)];
+        return (
+          <button key={a.id} onClick={() => onPick(a)}
+            className={cn("group flex w-full items-center gap-3 rounded-xl border border-line border-l-[3px] px-3 py-3 text-left transition-[transform,box-shadow] duration-150 hover:-translate-y-px hover:shadow-card", t.borderL, t.bg)}>
+            <div className="flex w-[74px] flex-none flex-col">
+              <span className="text-[14px] font-bold leading-none tnum">{time(a.scheduled_at)}</span>
+              <span className="mt-1 text-[10.5px] tnum text-ink3">{endTime(a.scheduled_at, a.duration_min)}</span>
             </div>
-          </div>
-          <span className="hidden tnum text-[13px] font-semibold sm:block">{money(a.price)}</span>
-          <span className={cn("whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-semibold", statusStyle[a.status])}>
-            {APPOINTMENT_STATUS_LABEL[a.status]}
-          </span>
-        </button>
-      ))}
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[13.5px] font-semibold">{a.customer?.name ?? "Customer"}</div>
+              <div className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-ink3">
+                <Car className={cn("h-3 w-3 flex-none", t.icon)} />
+                {a.service?.name ?? "Service"}{a.vehicle ? ` · ${vehicleLabel(a.vehicle)}` : ""}
+              </div>
+            </div>
+            <span className="hidden tnum text-[13px] font-semibold sm:block">{money(a.price)}</span>
+            <span className={cn("whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-semibold", statusStyle[a.status])}>
+              {APPOINTMENT_STATUS_LABEL[a.status]}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }
