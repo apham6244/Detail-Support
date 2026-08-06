@@ -3,6 +3,7 @@ import {
   Plus, Trash2, UserRound, ChevronLeft, ChevronRight,
   Clock, Bell, BellPlus, Car, Wrench, StickyNote, Send, AlertTriangle,
   Eye, Pencil, Copy, MessageSquare, Navigation, DollarSign, CalendarCheck, Hourglass,
+  Armchair, Sparkles, Lightbulb, Cog, Wind, Brush, Disc3, Droplets, type LucideIcon,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
@@ -44,22 +45,47 @@ const statusDot: Record<AppointmentStatus, string> = {
 
 /* Consistent service colour system — a light tint + coloured left border + a
    subtle tinted icon per service type. Never a solid-colour card. */
-type SvcTone = "blue" | "green" | "orange" | "purple" | "gray";
-const SVC_TONE: Record<SvcTone, { borderL: string; bg: string; icon: string }> = {
-  blue:   { borderL: "border-l-brand-500", bg: "bg-brand-500/[0.05]", icon: "text-brand-500" },
-  green:  { borderL: "border-l-success",   bg: "bg-success/[0.06]",   icon: "text-success" },
-  orange: { borderL: "border-l-warning",   bg: "bg-warning/[0.06]",   icon: "text-warning" },
-  purple: { borderL: "border-l-violet",    bg: "bg-violet/[0.06]",    icon: "text-violet" },
-  gray:   { borderL: "border-l-ink3/40",   bg: "bg-panel2",           icon: "text-ink3" },
+type SvcTone = "blue" | "green" | "orange" | "purple" | "gray" | "red" | "teal" | "amber";
+const SVC_TONE: Record<SvcTone, { borderL: string; bg: string; icon: string; badge: string; hoverBorder: string }> = {
+  blue:   { borderL: "border-l-brand-500", bg: "bg-brand-500/[0.05]", icon: "text-brand-500", badge: "bg-brand-500/10 text-brand-500", hoverBorder: "hover:border-brand-500/40" },
+  green:  { borderL: "border-l-success",   bg: "bg-success/[0.06]",   icon: "text-success",   badge: "bg-success/10 text-success",     hoverBorder: "hover:border-success/40" },
+  orange: { borderL: "border-l-warning",   bg: "bg-warning/[0.06]",   icon: "text-warning",   badge: "bg-warning/10 text-warning",     hoverBorder: "hover:border-warning/40" },
+  purple: { borderL: "border-l-violet",    bg: "bg-violet/[0.06]",    icon: "text-violet",    badge: "bg-violet/10 text-violet",       hoverBorder: "hover:border-violet/40" },
+  gray:   { borderL: "border-l-ink3/40",   bg: "bg-panel2",           icon: "text-ink3",      badge: "bg-ink/[0.06] text-ink2",        hoverBorder: "hover:border-ink3/40" },
+  red:    { borderL: "border-l-danger",    bg: "bg-danger/[0.06]",    icon: "text-danger",    badge: "bg-danger/10 text-danger",       hoverBorder: "hover:border-danger/40" },
+  teal:   { borderL: "border-l-[#0D9488]", bg: "bg-[#0D9488]/[0.06]", icon: "text-[#0D9488]", badge: "bg-[#0D9488]/12 text-[#0D9488]", hoverBorder: "hover:border-[#0D9488]/40" },
+  amber:  { borderL: "border-l-[#C79200]", bg: "bg-[#C79200]/[0.06]", icon: "text-[#B8860B]", badge: "bg-[#C79200]/12 text-[#B8860B]", hoverBorder: "hover:border-[#C79200]/40" },
 };
+/** Consistent service → colour, app-wide. Emerald Interior, Blue Full Detail,
+ *  Orange Paint, Purple Ceramic, Gray Maintenance, Red Engine, Teal Odor,
+ *  Amber Headlight. */
 function serviceTone(name?: string | null): SvcTone {
   const n = (name ?? "").toLowerCase();
   if (n.includes("interior")) return "green";
   if (n.includes("ceramic") || n.includes("coating")) return "purple";
-  if (n.includes("maintenance")) return "gray";
-  if (n.includes("exterior") || n.includes("paint") || n.includes("correction") || n.includes("wash")) return "orange";
+  if (n.includes("headlight")) return "amber";
+  if (n.includes("engine")) return "red";
+  if (n.includes("odor") || n.includes("odour")) return "teal";
+  if (n.includes("paint") || n.includes("correction") || n.includes("polish")) return "orange";
+  if (n.includes("maintenance") || n.includes("wash")) return "gray";
+  if (n.includes("wheel") || n.includes("tire") || n.includes("tyre")) return "gray";
   if (n.includes("full") || n.includes("detail")) return "blue";
+  if (n.includes("exterior")) return "orange";
   return "gray";
+}
+/** A simple, monochrome icon per service type. */
+function serviceIcon(name?: string | null): LucideIcon {
+  const n = (name ?? "").toLowerCase();
+  if (n.includes("interior")) return Armchair;
+  if (n.includes("ceramic") || n.includes("coating")) return Sparkles;
+  if (n.includes("headlight")) return Lightbulb;
+  if (n.includes("engine")) return Cog;
+  if (n.includes("odor") || n.includes("odour")) return Wind;
+  if (n.includes("paint") || n.includes("correction") || n.includes("polish")) return Brush;
+  if (n.includes("wheel") || n.includes("tire") || n.includes("tyre")) return Disc3;
+  if (n.includes("maintenance") || n.includes("wash")) return Droplets;
+  if (n.includes("full") || n.includes("detail")) return Car;
+  return Wrench;
 }
 const endTime = (iso: string, mins?: number | null) =>
   time(new Date(new Date(iso).getTime() + (mins ?? 60) * 60_000).toISOString());
@@ -516,26 +542,29 @@ function WeekCard({ a, onPick, onEdit, onDuplicate, cust }: {
   onDuplicate?: (a: Appointment) => void; cust?: CustLite;
 }) {
   const t = SVC_TONE[serviceTone(a.service?.name)];
+  const Svc = serviceIcon(a.service?.name);
   const open = () => onPick(a);
   return (
     <div
       role="button" tabIndex={0}
       onClick={(e) => { e.stopPropagation(); open(); }}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); open(); } }}
-      className={cn("group/card relative cursor-pointer rounded-lg border border-line border-l-[3px] p-2 outline-none transition-[transform,box-shadow] duration-150 hover:-translate-y-px hover:shadow-card focus-visible:ring-2 focus-visible:ring-brand-500/30", t.borderL, t.bg)}
+      className={cn("group/card relative cursor-pointer rounded-lg border border-line border-l-[3px] p-2 outline-none transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:shadow-card focus-visible:ring-2 focus-visible:ring-brand-500/30", t.borderL, t.bg, t.hoverBorder)}
     >
       <div className="flex items-center gap-1.5">
         <span className={cn("h-1.5 w-1.5 flex-none rounded-full", statusDot[a.status])} />
         <span className="truncate text-[12px] font-semibold text-ink">{a.customer?.name ?? "Customer"}</span>
       </div>
       {a.service?.name && (
-        <div className="mt-1 flex items-center gap-1">
-          <Car className={cn("h-3 w-3 flex-none", t.icon)} />
-          <span className="truncate text-[11px] font-medium text-ink2">{a.service.name}</span>
+        <div className="mt-1.5">
+          <span className={cn("inline-flex max-w-full items-center gap-1 rounded-full px-2 py-0.5 text-[11.5px] font-medium", t.badge)}>
+            <Svc className="h-3 w-3 flex-none" />
+            <span className="min-w-0 truncate">{a.service.name}</span>
+          </span>
         </div>
       )}
-      {a.vehicle && <div className="mt-0.5 truncate text-[10.5px] text-ink3">{vehicleLabel(a.vehicle)}</div>}
-      <div className="mt-0.5 text-[10.5px] tabular-nums text-ink3">{time(a.scheduled_at)} – {endTime(a.scheduled_at, a.duration_min)}</div>
+      {a.vehicle && <div className="mt-1.5 truncate text-[10.5px] text-ink3">{vehicleLabel(a.vehicle)}</div>}
+      <div className="mt-1 text-[10.5px] font-medium tabular-nums text-ink2">{time(a.scheduled_at)} – {endTime(a.scheduled_at, a.duration_min)}</div>
       {a.status !== "scheduled" && (
         <span className={cn("mt-1 inline-flex rounded px-1.5 py-0.5 text-[9.5px] font-semibold", statusStyle[a.status])}>{APPOINTMENT_STATUS_LABEL[a.status]}</span>
       )}
@@ -587,18 +616,21 @@ function DayView({ cursor, byDay, onPick, onAdd }: {
     <div className="flex flex-col gap-2">
       {list.map((a) => {
         const t = SVC_TONE[serviceTone(a.service?.name)];
+        const Svc = serviceIcon(a.service?.name);
         return (
           <button key={a.id} onClick={() => onPick(a)}
-            className={cn("group flex w-full items-center gap-3 rounded-xl border border-line border-l-[3px] px-3 py-3 text-left transition-[transform,box-shadow] duration-150 hover:-translate-y-px hover:shadow-card", t.borderL, t.bg)}>
+            className={cn("group flex w-full items-center gap-3 rounded-xl border border-line border-l-[3px] px-3 py-3 text-left transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:shadow-card", t.borderL, t.bg, t.hoverBorder)}>
             <div className="flex w-[74px] flex-none flex-col">
               <span className="text-[14px] font-bold leading-none tnum">{time(a.scheduled_at)}</span>
               <span className="mt-1 text-[10.5px] tnum text-ink3">{endTime(a.scheduled_at, a.duration_min)}</span>
             </div>
             <div className="min-w-0 flex-1">
               <div className="truncate text-[13.5px] font-semibold">{a.customer?.name ?? "Customer"}</div>
-              <div className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-ink3">
-                <Car className={cn("h-3 w-3 flex-none", t.icon)} />
-                {a.service?.name ?? "Service"}{a.vehicle ? ` · ${vehicleLabel(a.vehicle)}` : ""}
+              <div className="mt-1 flex items-center gap-2 text-xs">
+                <span className={cn("inline-flex flex-none items-center gap-1 rounded-full px-2 py-0.5 text-[11.5px] font-medium", t.badge)}>
+                  <Svc className="h-3 w-3 flex-none" />{a.service?.name ?? "Service"}
+                </span>
+                {a.vehicle && <span className="truncate text-ink3">{vehicleLabel(a.vehicle)}</span>}
               </div>
             </div>
             <span className="hidden tnum text-[13px] font-semibold sm:block">{money(a.price)}</span>
