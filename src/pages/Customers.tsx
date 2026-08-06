@@ -563,7 +563,7 @@ const CustomerRow = memo(function CustomerRow({ e, index, onOpen }: { e: Enriche
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate font-display text-[14.5px] font-bold tracking-tight text-ink">{c.name}</span>
-          {e.isVip && <Pill tone="violet" icon={Crown}>VIP</Pill>}
+          {e.isVip && <VipBadge />}
         </div>
         <div className="mt-0.5 truncate text-[12px] text-ink3">{c.phone || c.email || "No contact info"}</div>
       </div>
@@ -585,13 +585,13 @@ const CustomerRow = memo(function CustomerRow({ e, index, onOpen }: { e: Enriche
   );
 });
 
-/** Gradient initials avatar. Falls back from a photo if one ever exists. */
+/** Gradient initials avatar. Falls back from a photo if one ever exists.
+ *  VIPs get a thin purple ring + a small gold crown in the top-right corner. */
 function Avatar({ name, vip, src }: { name: string; vip: boolean; src?: string | null }) {
   const initials = name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
-  if (src) {
-    return <img src={src} alt="" className="h-[52px] w-[52px] flex-none rounded-2xl object-cover ring-1 ring-inset ring-line" />;
-  }
-  return (
+  const inner = src ? (
+    <img src={src} alt="" className="h-[52px] w-[52px] flex-none rounded-2xl object-cover ring-1 ring-inset ring-line" />
+  ) : (
     <div
       className={cn(
         "relative flex h-[52px] w-[52px] flex-none items-center justify-center overflow-hidden rounded-2xl font-display text-[16px] font-bold tracking-tight text-white",
@@ -603,6 +603,33 @@ function Avatar({ name, vip, src }: { name: string; vip: boolean; src?: string |
       <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/25 to-transparent" />
       <span className="relative">{initials}</span>
     </div>
+  );
+  if (!vip) return inner;
+  return (
+    <div className="relative flex-none">
+      <div className="rounded-2xl ring-2 ring-inset ring-violet/30">{inner}</div>
+      <span aria-hidden className="absolute -right-1 -top-1 flex h-[17px] w-[17px] items-center justify-center rounded-full bg-gradient-to-br from-warning to-violet text-white shadow-sm ring-2 ring-panel">
+        <Crown className="h-[9px] w-[9px]" />
+      </span>
+    </div>
+  );
+}
+
+/** Premium VIP badge — a soft purple→gold pill with a gold crown and a faint glow. */
+function VipBadge() {
+  return (
+    <span className="inline-flex flex-none items-center gap-1 rounded-full bg-gradient-to-r from-violet/15 to-warning/15 px-2 py-[3px] text-[10.5px] font-bold uppercase tracking-[0.05em] text-violet shadow-[0_1px_6px_-1px_rgba(122,91,224,0.45)] ring-1 ring-inset ring-violet/30">
+      <Crown className="h-3 w-3 text-warning" /> VIP
+    </span>
+  );
+}
+
+/** Softer, more premium "Booked" badge for VIPs with an upcoming appointment. */
+function BookedBadge({ count }: { count: number }) {
+  return (
+    <span className="inline-flex flex-none items-center gap-1.5 rounded-full bg-success/[0.09] px-2.5 py-[3px] text-[10.5px] font-semibold text-success ring-1 ring-inset ring-success/20">
+      <CalendarCheck className="h-3.5 w-3.5" /> {count > 1 ? `${count} booked` : "Booked"}
+    </span>
   );
 }
 
@@ -663,11 +690,6 @@ const CustomerCard = memo(function CustomerCard({ e, index, onOpen, onSchedule, 
 }) {
   const { c } = e;
   const tier = healthTier(e.health);
-  const identity = e.isVip
-    ? { tone: "violet" as Tone, icon: Crown, text: "VIP" }
-    : e.isNew
-    ? { tone: "brand" as Tone, icon: Sparkles, text: "New" }
-    : null;
   const state = e.isActive
     ? { tone: "success" as Tone, icon: CalendarCheck, text: e.upcoming > 1 ? `${e.upcoming} booked` : "Booked" }
     : e.needsFollowup
@@ -696,17 +718,25 @@ const CustomerCard = memo(function CustomerCard({ e, index, onOpen, onSchedule, 
       onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onOpen(c.id); } }}
       className={cn(
         "cv-card surface group relative flex cursor-pointer flex-col overflow-hidden rounded-[18px] p-5 text-left outline-none",
-        "transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-1 hover:shadow-lift focus-visible:ring-2 focus-visible:ring-brand-500/50",
-        e.isVip && "ring-1 ring-inset ring-violet/25 hover:border-violet/40",
+        "transition-[transform,box-shadow] duration-200 ease-out hover:-translate-y-1 focus-visible:ring-2 focus-visible:ring-brand-500/50",
+        e.isVip
+          ? "hover:shadow-[0_2px_6px_rgb(16_22_38_/_0.06),0_22px_48px_-14px_rgb(16_22_38_/_0.18),0_18px_40px_-16px_rgba(122,91,224,0.42)]"
+          : "hover:shadow-lift",
         e.isInactive && "opacity-[0.94]"
       )}
     >
-      {/* VIP gets a premium top accent + glow; everyone else stays clean. */}
+      {/* VIP: a thin purple→brand gradient border (masked). Everyone else stays clean. */}
       {e.isVip && (
-        <>
-          <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-violet via-brand-500 to-transparent" />
-          <span aria-hidden className="pointer-events-none absolute -right-10 -top-12 h-32 w-32 rounded-full bg-violet/12 blur-2xl" />
-        </>
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-0 rounded-[18px] p-px"
+          style={{
+            background: "linear-gradient(135deg, rgba(122,91,224,0.6), rgba(46,123,255,0.25) 45%, rgba(122,91,224,0) 80%)",
+            WebkitMask: "linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)",
+            WebkitMaskComposite: "xor",
+            maskComposite: "exclude",
+          }}
+        />
       )}
       <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-paint-gloss opacity-30" />
 
@@ -716,8 +746,14 @@ const CustomerCard = memo(function CustomerCard({ e, index, onOpen, onSchedule, 
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <h3 className="truncate font-display text-[17px] font-bold tracking-tight text-ink">{c.name}</h3>
-            {identity && <Pill tone={identity.tone} icon={identity.icon}>{identity.text}</Pill>}
+            {e.isVip ? <VipBadge /> : e.isNew ? <Pill tone="brand" icon={Sparkles}>New</Pill> : null}
           </div>
+          {e.isVip && (
+            <div className="mt-1 flex items-center gap-1.5 text-[11px] font-medium text-violet">
+              <Crown className="h-3 w-3 flex-none text-warning" />
+              <span className="truncate">Premium client · {moneyShort(e.spent)} lifetime</span>
+            </div>
+          )}
           <div className="mt-1.5 flex flex-col gap-0.5">
             {c.phone && (
               <span className="flex items-center gap-1.5 truncate text-[12.5px] text-ink2">
@@ -733,7 +769,9 @@ const CustomerCard = memo(function CustomerCard({ e, index, onOpen, onSchedule, 
           </div>
         </div>
         <div className="flex flex-none flex-col items-end gap-2">
-          {state && <Pill tone={state.tone} icon={state.icon}>{state.text}</Pill>}
+          {state && (e.isVip && e.isActive
+            ? <BookedBadge count={e.upcoming} />
+            : <Pill tone={state.tone} icon={state.icon}>{state.text}</Pill>)}
           <ChevronRight className="h-4 w-4 text-ink3 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-brand-500" />
         </div>
       </div>
@@ -748,10 +786,11 @@ const CustomerCard = memo(function CustomerCard({ e, index, onOpen, onSchedule, 
 
       {/* Health + intelligent insights — fills the card with useful signal */}
       <div className="mt-3 flex items-center gap-3 rounded-2xl bg-panel2/40 px-3.5 py-2.5 ring-1 ring-inset ring-line/50">
-        <HealthRing value={e.health} />
+        <HealthRing value={e.health} stroke={e.isVip ? 5.5 : 4.5} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 text-[11.5px] font-semibold text-ink">
             <Gauge className={cn("h-3.5 w-3.5", TONE[tier.tone].text)} />Health · {tier.label}
+            {e.isVip && <Sparkles className="h-3 w-3 flex-none text-warning" />}
           </div>
           <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-ink3">
             {e.avgSpend > 0 && <span>Avg ticket <b className="font-semibold text-ink2">{moneyShort(e.avgSpend)}</b></span>}
