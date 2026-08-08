@@ -1,5 +1,6 @@
+import { useEffect, useMemo } from "react";
 import { Link, Navigate } from "react-router-dom";
-import { motion, useReducedMotion } from "framer-motion";
+import { motion, useReducedMotion, useMotionValue, useSpring, useTransform } from "framer-motion";
 import {
   Users,
   Car,
@@ -14,6 +15,9 @@ import {
   Check,
   CircleDollarSign,
   ReceiptText,
+  Clock,
+  History,
+  Smartphone,
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
@@ -34,6 +38,18 @@ const features = [
 
 const trust = ["14-day free trial", "No credit card required"];
 
+/** Keyframes for the ambient dust drift and the dashboard cards' gentle float.
+ *  Both are gated behind prefers-reduced-motion so they never run for users who
+ *  opt out. Kept in a <style> tag so the page stays a single self-contained file. */
+const HERO_KEYFRAMES = `
+@keyframes ds-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
+@keyframes ds-drift { 0% { transform: translateY(10px); opacity: 0; } 14% { opacity: 0.5; } 86% { opacity: 0.5; } 100% { transform: translateY(-46px); opacity: 0; } }
+@media (prefers-reduced-motion: no-preference) {
+  .ds-float { animation: ds-float 7s ease-in-out infinite; will-change: transform; }
+  .ds-particle { animation-name: ds-drift; animation-timing-function: linear; animation-iteration-count: infinite; will-change: transform, opacity; }
+}
+`;
+
 /** Revenue curve for the dashboard chart — six months plus one either side. */
 const MONTHS = [
   { m: "Jan", h: 20 }, { m: "Feb", h: 44 }, { m: "Mar", h: 50 }, { m: "Apr", h: 62 },
@@ -53,9 +69,10 @@ export default function Welcome() {
     // than a separate panel butted against it. That gradient IS the seam — the
     // two halves read as one surface. Mobile keeps the stacked
     // image-strip-above-copy layout, unchanged.
-    <div className="relative flex min-h-screen flex-col overflow-hidden bg-carbon-950 lg:block">
+    <div className="relative bg-carbon-950">
+      <style>{HERO_KEYFRAMES}</style>
       {/* Header — spans both columns */}
-      <header className="absolute inset-x-0 top-0 z-20 flex items-center justify-between px-6 py-5 sm:px-10">
+      <header className="absolute inset-x-0 top-0 z-30 flex items-center justify-between px-6 py-5 sm:px-10">
         <div className="flex items-center gap-2.5">
           <DSIcon size={36} />
           <span className="font-display text-[15px] font-bold tracking-tight text-white">Detail Support</span>
@@ -76,6 +93,10 @@ export default function Welcome() {
           </Link>
         </div>
       </header>
+
+      {/* Hero — a bounded, full-viewport section so the full-bleed image stays
+          scoped here and the trust section can flow beneath it. */}
+      <section className="relative flex min-h-screen flex-col overflow-hidden lg:block">
 
       {/* Content. On mobile `hero-carbon` gives it a solid panel under the
           stacked strip. On desktop it floats over the full-bleed photo (z-10)
@@ -124,10 +145,13 @@ export default function Welcome() {
           <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:items-center min-[1400px]:mt-10">
             <Link
               to="/signup"
-              className="group inline-flex h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-brand-500 to-brand-600 px-7 text-[15px] font-semibold text-white shadow-glow transition-[transform,box-shadow,filter] duration-150 ease-out hover:brightness-[1.08] hover:shadow-glow-lg active:scale-[0.98] sm:w-auto min-[1400px]:h-[58px] min-[1400px]:gap-2.5 min-[1400px]:px-8 min-[1400px]:text-[16px]"
+              className="group relative inline-flex h-[52px] w-full items-center justify-center gap-2 overflow-hidden rounded-xl bg-gradient-to-br from-brand-500 to-brand-600 px-7 text-[15px] font-semibold text-white shadow-glow transition-[transform,box-shadow,filter] duration-150 ease-out hover:brightness-[1.08] hover:shadow-glow-lg active:scale-[0.98] sm:w-auto min-[1400px]:h-[58px] min-[1400px]:gap-2.5 min-[1400px]:px-8 min-[1400px]:text-[16px]"
             >
-              Start free trial
-              <ArrowRight className="h-[18px] w-[18px] transition-transform duration-150 group-hover:translate-x-0.5 min-[1400px]:h-5 min-[1400px]:w-5" />
+              {/* top-edge gloss + a diagonal light sweep that crosses on hover */}
+              <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/20 to-transparent" />
+              <span aria-hidden className="pointer-events-none absolute inset-0 -translate-x-[130%] bg-gradient-to-r from-transparent via-white/25 to-transparent transition-transform duration-700 ease-out group-hover:translate-x-[130%]" />
+              <span className="relative">Start free trial</span>
+              <ArrowRight className="relative h-[18px] w-[18px] transition-transform duration-150 group-hover:translate-x-0.5 min-[1400px]:h-5 min-[1400px]:w-5" />
             </Link>
             <Link
               to="/demo"
@@ -229,8 +253,14 @@ export default function Welcome() {
         <div className="absolute inset-0 hidden lg:block lg:bg-gradient-to-b lg:from-carbon-950/94 lg:to-transparent lg:to-52%" />
         <div className="absolute inset-0 hidden lg:block lg:bg-gradient-to-t lg:from-carbon-950/80 lg:to-transparent lg:to-30%" />
 
+        {/* Ambient dust — a handful of slow-drifting motes, desktop + motion-safe. */}
+        <Particles />
+
         <AppPreview />
       </div>
+      </section>
+
+      <TrustSection />
     </div>
   );
 }
@@ -258,6 +288,25 @@ export default function Welcome() {
  */
 function AppPreview() {
   const still = useReducedMotion();
+
+  // Subtle mouse parallax on the whole card cluster — a few px of drift that
+  // makes the scene feel three-dimensional without ever moving enough to
+  // distract. Off entirely for reduced-motion.
+  const mx = useMotionValue(0);
+  const my = useMotionValue(0);
+  const sx = useSpring(mx, { stiffness: 50, damping: 18, mass: 0.4 });
+  const sy = useSpring(my, { stiffness: 50, damping: 18, mass: 0.4 });
+  const px = useTransform(sx, (v) => v * 14);
+  const py = useTransform(sy, (v) => v * 14);
+  useEffect(() => {
+    if (still) return;
+    const on = (e: MouseEvent) => {
+      mx.set(e.clientX / window.innerWidth - 0.5);
+      my.set(e.clientY / window.innerHeight - 0.5);
+    };
+    window.addEventListener("mousemove", on, { passive: true });
+    return () => window.removeEventListener("mousemove", on);
+  }, [still, mx, my]);
 
   const panel = (delay: number) => ({
     initial: still ? { opacity: 0 } : { opacity: 0, y: 10 },
@@ -287,9 +336,11 @@ function AppPreview() {
       <div className="absolute left-[45%] top-[24%] h-[460px] w-[560px] rounded-full bg-brand-500/12 blur-[120px]" />
       <div className="absolute left-[52%] top-[33%] h-[300px] w-[360px] rounded-full bg-brand-400/10 blur-[90px]" />
 
+      <motion.div style={{ x: px, y: py }} className="absolute inset-0">
+
       {/* ── Customer — small accent, peeks above the dashboard's top-left ── */}
       <div className="absolute left-[51.5%] top-[12.5%] z-[22] w-[244px] rotate-[-2deg]">
-        <Screen still={still} delay={0.45} tier="tertiary">
+        <Screen still={still} delay={0.45} tier="tertiary" floatDelay={0}>
           <ScreenHead icon={Users} label="Customer" />
           <div className="mt-3 flex items-center gap-2.5">
             <span className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-gradient-to-br from-violet to-brand-600 font-display text-[13px] font-bold text-white">
@@ -316,7 +367,7 @@ function AppPreview() {
           asymmetric rather than a level row. 300px: below ~300 the service
           names truncate to "Ceramic Co…". */}
       <div className="absolute left-[71.5%] top-[12%] z-30 w-[296px] rotate-[1.5deg]">
-        <Screen still={still} delay={0.65} tier="secondary">
+        <Screen still={still} delay={0.65} tier="secondary" floatDelay={1.6}>
           <div className="flex items-center gap-2">
             <ScreenHead icon={CalendarClock} label="Today's schedule" />
             <span className="ml-auto text-[10.5px] font-medium text-white/40">4 jobs</span>
@@ -407,7 +458,7 @@ function AppPreview() {
       {/* ── Invoice — smallest, the accent; tucks under the dashboard's
           bottom-left corner. */}
       <div className="absolute left-[51.5%] top-[57.5%] z-[24] w-[180px] rotate-[-2deg]">
-        <Screen still={still} delay={0.85} tier="tertiary">
+        <Screen still={still} delay={0.85} tier="tertiary" floatDelay={0.8}>
           <div className="flex items-center gap-2">
             <ScreenHead icon={ReceiptText} label="Invoice" />
             <span className="ml-auto rounded-full bg-success/18 px-2 py-[3px] text-[9.5px] font-bold uppercase tracking-wide text-success">
@@ -425,7 +476,7 @@ function AppPreview() {
       {/* ── Vehicle — bottom-right, overlaps the dashboard's bottom-right and
           sits lower than the invoice, so the bottom edge is staggered too. */}
       <div className="absolute left-[71.5%] top-[45.5%] z-[28] w-[288px] rotate-[1.5deg]">
-        <Screen still={still} delay={0.75} tier="secondary">
+        <Screen still={still} delay={0.75} tier="secondary" floatDelay={2.4}>
           <ScreenHead icon={Car} label="Vehicle" />
           <div className="mt-3 flex items-start gap-3">
             <div className="min-w-0 flex-1">
@@ -447,6 +498,7 @@ function AppPreview() {
           <CardLink label="View vehicle history" />
         </Screen>
       </div>
+      </motion.div>
     </div>
   );
 }
@@ -472,12 +524,12 @@ const TIER = {
   },
 } as const;
 
-function Screen({ className, delay, still, tier = "secondary", children }: {
+function Screen({ className, delay, still, tier = "secondary", floatDelay, children }: {
   className?: string; delay: number; still: boolean | null;
-  tier?: keyof typeof TIER; children: React.ReactNode;
+  tier?: keyof typeof TIER; floatDelay?: number; children: React.ReactNode;
 }) {
   const t = TIER[tier];
-  return (
+  const card = (
     <motion.div
       initial={still ? { opacity: 0 } : { opacity: 0, y: 8 }}
       animate={{ opacity: t.opacity, y: 0 }}
@@ -503,6 +555,15 @@ function Screen({ className, delay, still, tier = "secondary", children }: {
       <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/18 to-transparent" />
       <div className="relative">{children}</div>
     </motion.div>
+  );
+  // A separate wrapper carries the gentle continuous float so it never fights
+  // the entrance transform on the card itself. Disabled for reduced motion via
+  // the .ds-float media query.
+  if (floatDelay == null) return card;
+  return (
+    <div className="ds-float" style={{ animationDelay: `${floatDelay}s`, animationDuration: `${7 + (floatDelay % 3)}s` }}>
+      {card}
+    </div>
   );
 }
 
@@ -603,5 +664,81 @@ function StatTile({ icon: Icon, tone, label, value, trend, note }: {
       </div>
       {note && <div className="mt-1.5 text-[10px] text-white/35">{note}</div>}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+/** Ambient dust — a small set of slow-drifting motes over the photo. Desktop
+ *  only, motion-safe, and cheap: ~16 GPU-composited spans, positions fixed on
+ *  first render so they don't reshuffle. */
+function Particles() {
+  const motes = useMemo(
+    () =>
+      Array.from({ length: 16 }, () => ({
+        left: Math.round(Math.random() * 100),
+        top: Math.round(Math.random() * 100),
+        size: 1 + Math.random() * 2,
+        op: 0.22 + Math.random() * 0.32,
+        delay: Math.random() * 12,
+        dur: 11 + Math.random() * 10,
+      })),
+    []
+  );
+  return (
+    <div aria-hidden className="pointer-events-none absolute inset-0 hidden overflow-hidden lg:block">
+      {motes.map((m, i) => (
+        <span
+          key={i}
+          className="ds-particle absolute rounded-full bg-white"
+          style={{
+            left: `${m.left}%`, top: `${m.top}%`,
+            width: `${m.size}px`, height: `${m.size}px`,
+            opacity: m.op, filter: "blur(0.5px)",
+            animationDelay: `${m.delay}s`, animationDuration: `${m.dur}s`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** Trust band beneath the hero — honest, outcome-focused value props (no
+ *  fabricated stats), fading up as they scroll into view. */
+function TrustSection() {
+  const items = [
+    { icon: Clock, title: "Save hours every week", body: "Stop re-typing customer details across texts, notes, and spreadsheets." },
+    { icon: Car, title: "Built for detailers", body: "Every screen speaks your trade — services, vehicles, bays, and add-ons." },
+    { icon: History, title: "Never lose a customer", body: "Full history, vehicles, and lifetime spend on every client, kept forever." },
+    { icon: Smartphone, title: "Run it from anywhere", body: "Book, invoice, and follow up from your phone between jobs." },
+  ];
+  return (
+    <section className="relative border-t border-white/[0.07] bg-carbon-950 px-6 py-16 sm:px-10 lg:py-24">
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-brand-500/[0.05] to-transparent" />
+      <div className="relative mx-auto max-w-6xl">
+        <p className="text-center text-[12px] font-semibold uppercase tracking-[0.2em] text-brand-300/70">Why detailers switch</p>
+        <h2 className="mx-auto mt-3 max-w-2xl text-balance text-center font-display text-[26px] font-bold leading-tight tracking-tight text-white sm:text-[32px]">
+          Everything your shop runs on, in one calm workspace
+        </h2>
+        <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {items.map(({ icon: Icon, title, body }) => (
+            <motion.div
+              key={title}
+              initial={{ opacity: 0, y: 16 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, margin: "-80px" }}
+              transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+              className="group rounded-2xl border border-white/[0.08] bg-white/[0.02] p-5 backdrop-blur-sm transition-[transform,border-color,background-color] duration-200 hover:-translate-y-1 hover:border-brand-400/30 hover:bg-white/[0.04]"
+            >
+              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-500/12 text-brand-300 ring-1 ring-inset ring-brand-400/20 transition-transform duration-200 group-hover:scale-105">
+                <Icon className="h-[22px] w-[22px]" />
+              </span>
+              <h3 className="mt-4 font-display text-[16px] font-bold tracking-tight text-white">{title}</h3>
+              <p className="mt-1.5 text-[13.5px] leading-relaxed text-white/55">{body}</p>
+            </motion.div>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
