@@ -40,7 +40,7 @@ export default function Welcome() {
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-50 border-b border-white/[0.06] bg-carbon-950/70 backdrop-blur-xl">
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5 sm:px-8">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-5 sm:px-8 lg:px-10">
           <div className="flex items-center gap-2.5">
             <DSIcon size={32} />
             <span className="font-display text-[15px] font-bold tracking-tight">Detail Support</span>
@@ -62,7 +62,7 @@ export default function Welcome() {
       </header>
 
       {/* ── Hero ───────────────────────────────────────────────────────── */}
-      <section className="relative mx-auto grid max-w-6xl items-center gap-14 px-5 pb-20 pt-14 sm:px-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.08fr)] lg:gap-10 lg:pb-28 lg:pt-24">
+      <section className="relative mx-auto grid max-w-7xl items-center gap-12 px-5 pb-16 pt-12 sm:px-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.22fr)] lg:gap-16 lg:px-10 lg:pb-24 lg:pt-20 xl:gap-20">
         {/* Left — copy */}
         <motion.div initial="hidden" animate="show" variants={rise()} className="max-w-xl">
           <span className="inline-flex items-center gap-2 rounded-full border border-brand-400/25 bg-brand-500/10 px-4 py-2 text-[13px] font-semibold text-brand-200">
@@ -171,7 +171,7 @@ export default function Welcome() {
 
       {/* ── Footer ─────────────────────────────────────────────────────── */}
       <footer className="border-t border-white/[0.06]">
-        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-5 py-8 sm:flex-row sm:px-8">
+        <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-5 py-8 sm:flex-row sm:px-8 lg:px-10">
           <div className="flex items-center gap-2.5">
             <DSIcon size={26} />
             <span className="font-display text-[13.5px] font-bold tracking-tight text-white/80">Detail Support</span>
@@ -206,7 +206,7 @@ function ProductShowcase({ still }: { still: boolean | null }) {
   });
 
   return (
-    <div className="relative mx-auto w-full max-w-[520px] lg:mx-0 lg:ml-auto lg:max-w-[560px]">
+    <div className="relative mx-auto w-full max-w-[520px] lg:mx-0 lg:ml-auto lg:max-w-[600px] xl:max-w-[640px]">
       {/* soft base glow so the window feels lifted off the page */}
       <div aria-hidden className="absolute -inset-6 -z-10 rounded-[36px] bg-brand-500/[0.08] blur-2xl" />
 
@@ -309,7 +309,7 @@ function ProductShowcase({ still }: { still: boolean | null }) {
 function Section({ className, children }: { className?: string; children: React.ReactNode }) {
   return (
     <section className={cn("relative", className)}>
-      <div className="mx-auto max-w-6xl px-5 py-20 sm:px-8 lg:py-24">{children}</div>
+      <div className="mx-auto max-w-7xl px-5 py-20 sm:px-8 lg:px-10 lg:py-24">{children}</div>
     </section>
   );
 }
