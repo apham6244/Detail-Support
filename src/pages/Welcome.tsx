@@ -36,25 +36,29 @@ export default function Welcome() {
         <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
         <div className="absolute -top-40 right-[-10%] h-[620px] w-[620px] rounded-full bg-brand-500/[0.14] blur-[150px]" />
         <div className="absolute -top-24 left-[-8%] h-[420px] w-[420px] rounded-full bg-violet/[0.08] blur-[150px]" />
+        {/* Automotive light reflection — two faint diagonal streaks, like a
+            highlight raking across paint. Deliberately near-invisible. */}
+        <div className="absolute right-[23%] top-[-10%] hidden h-[135%] w-px rotate-[19deg] bg-gradient-to-b from-transparent via-brand-300/[0.11] to-transparent lg:block" />
+        <div className="absolute right-[20.5%] top-[-10%] hidden h-[135%] w-px rotate-[19deg] bg-gradient-to-b from-transparent via-white/[0.05] to-transparent lg:block" />
       </div>
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-50 border-b border-white/[0.06] bg-carbon-950/70 backdrop-blur-xl">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-5 sm:px-8 lg:px-10">
+        <div className="mx-auto flex h-[70px] max-w-7xl items-center justify-between px-5 sm:px-8 lg:px-10 2xl:max-w-[1400px]">
           <div className="flex items-center gap-2.5">
-            <DSIcon size={32} />
-            <span className="font-display text-[15px] font-bold tracking-tight">Detail Support</span>
+            <DSIcon size={35} />
+            <span className="font-display text-[16px] font-bold tracking-tight">Detail Support</span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             <button onClick={toggle} aria-label="Toggle theme"
-              className="flex h-9 w-9 items-center justify-center rounded-lg text-white/70 ring-1 ring-inset ring-white/10 transition hover:bg-white/[0.06] hover:text-white">
-              {theme === "dark" ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
+              className="flex h-10 w-10 items-center justify-center rounded-lg text-white/70 ring-1 ring-inset ring-white/10 transition hover:bg-white/[0.06] hover:text-white">
+              {theme === "dark" ? <Sun className="h-[19px] w-[19px]" /> : <Moon className="h-[19px] w-[19px]" />}
             </button>
-            <Link to="/login" className="hidden rounded-lg px-3.5 py-2 text-[13.5px] font-semibold text-white/80 transition hover:text-white sm:inline-flex">
+            <Link to="/login" className="hidden rounded-lg px-4 py-2.5 text-[14px] font-semibold text-white/80 transition hover:text-white sm:inline-flex">
               Log in
             </Link>
             <Link to="/signup"
-              className="rounded-lg bg-white px-3.5 py-2 text-[13.5px] font-semibold text-carbon-950 transition hover:bg-white/90 active:scale-[0.98]">
+              className="rounded-lg bg-white px-4 py-2.5 text-[14px] font-semibold text-carbon-950 transition hover:bg-white/90 active:scale-[0.98]">
               Get started
             </Link>
           </div>
@@ -62,15 +66,15 @@ export default function Welcome() {
       </header>
 
       {/* ── Hero ───────────────────────────────────────────────────────── */}
-      <section className="relative mx-auto grid max-w-7xl items-center gap-12 px-5 pb-16 pt-12 sm:px-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.22fr)] lg:gap-16 lg:px-10 lg:pb-24 lg:pt-20 xl:gap-20">
+      <section className="relative mx-auto grid max-w-7xl items-center gap-12 px-5 pb-14 pt-12 sm:px-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] lg:gap-12 lg:px-10 lg:pb-20 lg:pt-[76px] xl:gap-14 2xl:max-w-[1400px]">
         {/* Left — copy */}
-        <motion.div initial="hidden" animate="show" variants={rise()} className="max-w-xl">
+        <motion.div initial="hidden" animate="show" variants={rise()} className="max-w-xl lg:max-w-[560px]">
           <span className="inline-flex items-center gap-2 rounded-full border border-brand-400/25 bg-brand-500/10 px-4 py-2 text-[13px] font-semibold text-brand-200">
             <span className="h-1.5 w-1.5 rounded-full bg-brand-400" />
             Built for professional auto detailers
           </span>
 
-          <h1 className="mt-7 font-display text-[46px] font-extrabold leading-[1.04] tracking-[-0.03em] sm:text-[60px] lg:text-[68px]">
+          <h1 className="mt-7 font-display text-[46px] font-extrabold leading-[1.03] tracking-[-0.03em] sm:text-[60px] lg:text-[68px] xl:text-[74px]">
             Run your detail shop,
             <br className="hidden sm:block" />{" "}
             <span className="bg-gradient-to-r from-white to-brand-200 bg-clip-text text-transparent">not a spreadsheet.</span>
@@ -112,7 +116,7 @@ export default function Welcome() {
       <Section>
         <SectionLabel>One workspace</SectionLabel>
         <SectionTitle>Everything your shop runs on, in one place</SectionTitle>
-        <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
           {[
             { icon: Users, title: "Customers", body: "Full history, vehicles, and lifetime spend on every client." },
             { icon: CalendarClock, title: "Scheduling", body: "See the whole crew's day and book jobs without double-booking a bay." },
@@ -128,40 +132,45 @@ export default function Welcome() {
       <Section className="border-t border-white/[0.06]">
         <SectionLabel>Why detailers switch</SectionLabel>
         <SectionTitle>Built for the way detail shops actually work</SectionTitle>
-        <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mx-auto mt-14 grid max-w-5xl gap-5 sm:grid-cols-2">
           {[
             { icon: Clock, title: "Save hours every week", body: "Stop re-typing customer details across texts, notes, and spreadsheets." },
             { icon: Car, title: "Speaks your trade", body: "Services, vehicles, bays, and add-ons — the way your shop already thinks." },
             { icon: History, title: "Never lose a customer", body: "Complete history and spend on every client, kept forever." },
             { icon: Smartphone, title: "Run it from anywhere", body: "Book, invoice, and follow up from your phone between jobs." },
           ].map((f) => (
-            <FeatureCard key={f.title} {...f} />
+            <BenefitCard key={f.title} {...f} />
           ))}
         </div>
       </Section>
 
       {/* ── Pricing teaser ─────────────────────────────────────────────── */}
       <Section className="border-t border-white/[0.06]">
-        <div className="relative overflow-hidden rounded-3xl border border-white/[0.08] bg-gradient-to-br from-white/[0.04] to-transparent p-8 text-center sm:p-12">
-          <div aria-hidden className="pointer-events-none absolute -top-24 left-1/2 h-[320px] w-[520px] -translate-x-1/2 rounded-full bg-brand-500/[0.12] blur-[120px]" />
+        <div className="relative overflow-hidden rounded-[28px] border border-white/[0.08] bg-gradient-to-br from-white/[0.05] to-white/[0.01] px-6 py-14 text-center ring-1 ring-inset ring-white/[0.04] sm:px-12 lg:py-20">
+          {/* Subtle blue ambient — a soft top wash and a fainter base pool. */}
+          <div aria-hidden className="pointer-events-none absolute -top-28 left-1/2 h-[340px] w-[600px] -translate-x-1/2 rounded-full bg-brand-500/[0.14] blur-[130px]" />
+          <div aria-hidden className="pointer-events-none absolute -bottom-32 left-1/2 h-[260px] w-[520px] -translate-x-1/2 rounded-full bg-brand-500/[0.06] blur-[130px]" />
+          <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
           <div className="relative">
             <span className="inline-flex items-center gap-1.5 rounded-full border border-brand-400/25 bg-brand-500/10 px-3.5 py-1.5 text-[12.5px] font-semibold text-brand-200">
               <Sparkles className="h-3.5 w-3.5" /> Founding-member pricing
             </span>
-            <h2 className="mx-auto mt-5 max-w-xl text-balance font-display text-[26px] font-bold leading-tight tracking-tight sm:text-[32px]">
+            <h2 className="mx-auto mt-6 max-w-2xl text-balance font-display text-[30px] font-bold leading-[1.1] tracking-tight sm:text-[40px]">
               Try it free for 14 days. No credit card.
             </h2>
-            <p className="mx-auto mt-3 max-w-md text-[15px] leading-relaxed text-white/55">
+            <p className="mx-auto mt-4 max-w-md text-[15.5px] leading-relaxed text-white/55">
               Lock in early-member pricing while Detail Support is growing. Cancel anytime — your data is always yours.
             </p>
-            <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
               <Link to="/signup"
-                className="group inline-flex h-[52px] items-center justify-center gap-2 rounded-xl bg-gradient-to-b from-brand-500 to-brand-600 px-7 text-[15px] font-semibold shadow-[0_8px_24px_-6px_rgba(46,123,255,0.55)] transition hover:brightness-[1.06] active:scale-[0.98]">
-                Get Started Free
-                <ArrowRight className="h-[18px] w-[18px] transition-transform duration-150 group-hover:translate-x-0.5" />
+                className="group relative inline-flex h-[56px] items-center justify-center gap-2 overflow-hidden rounded-xl bg-gradient-to-b from-brand-500 to-brand-600 px-8 text-[15.5px] font-semibold shadow-[0_8px_24px_-6px_rgba(46,123,255,0.55)] transition-[transform,box-shadow,filter] duration-150 hover:brightness-[1.06] hover:shadow-[0_12px_30px_-6px_rgba(46,123,255,0.65)] active:scale-[0.98]">
+                <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/20 to-transparent" />
+                <span aria-hidden className="pointer-events-none absolute inset-0 -translate-x-[130%] bg-gradient-to-r from-transparent via-white/25 to-transparent transition-transform duration-700 ease-out group-hover:translate-x-[130%]" />
+                <span className="relative">Get Started Free</span>
+                <ArrowRight className="relative h-[18px] w-[18px] transition-transform duration-150 group-hover:translate-x-0.5" />
               </Link>
               <Link to="/demo"
-                className="inline-flex h-[52px] items-center justify-center gap-2 rounded-xl px-6 text-[15px] font-semibold text-white ring-1 ring-inset ring-white/15 transition hover:bg-white/[0.06] hover:ring-white/25 active:scale-[0.98]">
+                className="inline-flex h-[56px] items-center justify-center gap-2 rounded-xl px-7 text-[15.5px] font-semibold text-white ring-1 ring-inset ring-white/15 transition hover:bg-white/[0.06] hover:ring-white/25 active:scale-[0.98]">
                 <Eye className="h-[18px] w-[18px]" /> Explore Demo
               </Link>
             </div>
@@ -171,7 +180,7 @@ export default function Welcome() {
 
       {/* ── Footer ─────────────────────────────────────────────────────── */}
       <footer className="border-t border-white/[0.06]">
-        <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-5 py-8 sm:flex-row sm:px-8 lg:px-10">
+        <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-5 py-8 sm:flex-row sm:px-8 lg:px-10 2xl:max-w-[1400px]">
           <div className="flex items-center gap-2.5">
             <DSIcon size={26} />
             <span className="font-display text-[13.5px] font-bold tracking-tight text-white/80">Detail Support</span>
@@ -206,7 +215,7 @@ function ProductShowcase({ still }: { still: boolean | null }) {
   });
 
   return (
-    <div className="relative mx-auto w-full max-w-[520px] lg:mx-0 lg:ml-auto lg:max-w-[600px] xl:max-w-[640px]">
+    <div className="relative mx-auto w-full max-w-[540px] lg:mx-0 lg:ml-auto lg:max-w-[680px] xl:max-w-[700px] 2xl:max-w-[740px]">
       {/* soft base glow so the window feels lifted off the page */}
       <div aria-hidden className="absolute -inset-6 -z-10 rounded-[36px] bg-brand-500/[0.08] blur-2xl" />
 
@@ -309,16 +318,16 @@ function ProductShowcase({ still }: { still: boolean | null }) {
 function Section({ className, children }: { className?: string; children: React.ReactNode }) {
   return (
     <section className={cn("relative", className)}>
-      <div className="mx-auto max-w-7xl px-5 py-20 sm:px-8 lg:px-10 lg:py-24">{children}</div>
+      <div className="mx-auto max-w-7xl px-5 py-16 sm:px-8 lg:px-10 lg:py-[76px] 2xl:max-w-[1400px]">{children}</div>
     </section>
   );
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
-  return <p className="text-center text-[12px] font-semibold uppercase tracking-[0.2em] text-brand-300/70">{children}</p>;
+  return <p className="text-center text-[12px] font-semibold uppercase tracking-[0.22em] text-brand-300/70">{children}</p>;
 }
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <h2 className="mx-auto mt-3 max-w-2xl text-balance text-center font-display text-[26px] font-bold leading-tight tracking-tight sm:text-[32px]">{children}</h2>;
+  return <h2 className="mx-auto mt-3.5 max-w-2xl text-balance text-center font-display text-[28px] font-bold leading-tight tracking-tight sm:text-[34px]">{children}</h2>;
 }
 
 function FeatureCard({ icon: Icon, title, body }: { icon: LucideIcon; title: string; body: string }) {
@@ -326,13 +335,36 @@ function FeatureCard({ icon: Icon, title, body }: { icon: LucideIcon; title: str
     <motion.div
       initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, margin: "-80px" }} transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-      className="group rounded-2xl border border-white/[0.08] bg-white/[0.02] p-5 transition-[transform,border-color,background-color] duration-200 hover:-translate-y-1 hover:border-brand-400/30 hover:bg-white/[0.04]"
+      className="group rounded-2xl border border-white/[0.08] bg-white/[0.02] p-6 transition-[transform,border-color,background-color] duration-200 hover:-translate-y-1 hover:border-brand-400/30 hover:bg-white/[0.04]"
     >
-      <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-500/12 text-brand-300 ring-1 ring-inset ring-brand-400/20 transition-transform duration-200 group-hover:scale-105">
-        <Icon className="h-[22px] w-[22px]" />
+      <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500/12 text-brand-300 ring-1 ring-inset ring-brand-400/20 transition-transform duration-200 group-hover:scale-105">
+        <Icon className="h-6 w-6" />
       </span>
-      <h3 className="mt-4 font-display text-[16px] font-bold tracking-tight">{title}</h3>
-      <p className="mt-1.5 text-[13.5px] leading-relaxed text-white/55">{body}</p>
+      <h3 className="mt-5 font-display text-[17px] font-bold tracking-tight">{title}</h3>
+      <p className="mt-2 text-[14px] leading-relaxed text-white/55">{body}</p>
+    </motion.div>
+  );
+}
+
+// A deliberately different rhythm from FeatureCard: fewer, wider cards laid out
+// horizontally (icon beside the copy) so the "why switch" section doesn't read
+// as a second identical four-up grid. Stronger icon tile, a hairline accent bar
+// that lights up on hover.
+function BenefitCard({ icon: Icon, title, body }: { icon: LucideIcon; title: string; body: string }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: "-80px" }} transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+      className="group relative flex items-start gap-5 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.02] p-6 transition-[transform,border-color,background-color] duration-200 hover:-translate-y-1 hover:border-brand-400/30 hover:bg-white/[0.04] lg:p-7"
+    >
+      <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-gradient-to-b from-brand-400/0 via-brand-400/60 to-brand-400/0 opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
+      <span className="flex h-14 w-14 flex-none items-center justify-center rounded-2xl bg-brand-500/12 text-brand-300 ring-1 ring-inset ring-brand-400/20 transition-[transform,background-color] duration-200 group-hover:scale-105 group-hover:bg-brand-500/[0.18]">
+        <Icon className="h-7 w-7" />
+      </span>
+      <div className="min-w-0">
+        <h3 className="font-display text-[17.5px] font-bold tracking-tight">{title}</h3>
+        <p className="mt-2 text-[14.5px] leading-relaxed text-white/55">{body}</p>
+      </div>
     </motion.div>
   );
 }
