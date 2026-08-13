@@ -1,13 +1,15 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
   Plus, Trash2, UserRound, ChevronLeft, ChevronRight,
   Clock, Bell, BellPlus, Car, Wrench, StickyNote, Send, AlertTriangle,
   Eye, Pencil, Copy, MessageSquare, Navigation, DollarSign, CalendarCheck, Hourglass,
-  Armchair, Sparkles, Lightbulb, Cog, Wind, Brush, Disc3, Droplets, type LucideIcon,
+  Armchair, Sparkles, Lightbulb, Cog, Wind, Brush, Disc3, Droplets,
+  Loader2, CalendarDays, type LucideIcon,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { Modal, Field } from "@/components/ui/Modal";
+import { Combobox } from "@/components/ui/Combobox";
 import { Th, Td, IconBtn, EmptyState, SignInPrompt, money } from "@/components/ui/data";
 import { confirm, toast } from "@/components/ui/feedback";
 import { PageSkeleton } from "@/components/ui/Skeleton";
@@ -102,6 +104,27 @@ function toLocalInput(d: Date) {
 }
 function defaultWhen() { const d = new Date(); d.setHours(d.getHours() + 1, 0, 0, 0); return toLocalInput(d); }
 
+/** Up-to-two-letter initials for the customer avatar chip. */
+const initials = (name: string) =>
+  name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("") || "?";
+
+/** Booking-form field wrapper: a div-based label (so it can safely contain
+ *  button-driven Comboboxes) with an optional required marker and right hint. */
+function LabeledField({ label, required, hint, children }: {
+  label: string; required?: boolean; hint?: ReactNode; children: ReactNode;
+}) {
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink2">
+        <span>{label}</span>
+        {required && <span className="text-danger" aria-hidden>*</span>}
+        {hint && <span className="ml-auto font-medium normal-case tracking-normal text-ink3">{hint}</span>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
 export default function Appointments() {
   const { appointments, loading, ready, create, update, setStatus, remove, assign } = useAppointments();
   const { customers } = useCustomers();
@@ -144,6 +167,36 @@ export default function Appointments() {
   }, [appointments]);
 
   const custById = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers]);
+
+  // ---- Booking form: option lists + service-driven auto-fill --------------
+  const svcById = useMemo(() => new Map(services.map((s) => [s.id, s])), [services]);
+  const vehById = useMemo(() => new Map(vehicles.map((v) => [v.id, v])), [vehicles]);
+
+  const customerOptions = useMemo(
+    () => customers.map((c) => ({ value: c.id, label: c.name, keywords: `${c.phone ?? ""} ${c.email ?? ""}` })),
+    [customers],
+  );
+  const serviceOptions = useMemo(
+    () => services.map((s) => ({ value: s.id, label: s.name, keywords: s.category ?? "" })),
+    [services],
+  );
+  const vehicleOptions = useMemo(
+    () => vehicles.map((v) => ({ value: v.id, label: vehicleLabel(v), keywords: `${v.license_plate ?? ""} ${v.color ?? ""}` })),
+    [vehicles],
+  );
+
+  // Selecting a service auto-fills its default duration and price. Both stay
+  // editable afterward; picking a different service re-seeds them.
+  const pickService = (id: string) => {
+    setServiceId(id);
+    const s = services.find((x) => x.id === id);
+    if (s) { setDuration(String(s.duration_min || 60)); setPrice(s.price != null ? s.price.toFixed(2) : ""); }
+  };
+
+  const datePart = when.slice(0, 10);
+  const timePart = when.slice(11, 16);
+  const whenValid = !Number.isNaN(new Date(when).getTime());
+  const selectedService = svcById.get(serviceId);
 
   // Compact "today" workload for the header stat row (real today, not the cursor).
   const todayStats = useMemo(() => {
@@ -357,46 +410,153 @@ export default function Appointments() {
       </Modal>
 
       {/* Create / edit */}
-      <Modal open={formOpen} onClose={() => setFormOpen(false)} title={editing ? "Edit job" : "Book job"}
-        footer={<><Button onClick={() => setFormOpen(false)}>Cancel</Button>
-          <Button variant="primary" onClick={save} disabled={busy || !customerId}>{busy ? "Saving…" : editing ? "Save changes" : "Book"}</Button></>}>
+      <Modal open={formOpen} onClose={() => setFormOpen(false)} size="lg" title={editing ? "Edit job" : "Book job"}
+        footer={<>
+          <Button onClick={() => setFormOpen(false)}>Cancel</Button>
+          <Button variant="primary" onClick={save} disabled={busy || !customerId || !whenValid}
+            icon={busy ? <Loader2 className="animate-spin" /> : undefined}>
+            {busy ? (editing ? "Saving…" : "Booking…") : editing ? "Save changes" : "Book job"}
+          </Button>
+        </>}>
         <div className="flex flex-col gap-4">
-          <Field label="Customer">
-            <select className="input" value={customerId} onChange={(e) => { setCustomerId(e.target.value); setVehicleId(""); }}>
-              <option value="">Select a customer…</option>
-              {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </Field>
-          {customers.length === 0 && <div className="text-[12.5px] text-warning">Add a customer first (Customers page).</div>}
+          {/* Customer — the anchor: required, searchable */}
+          <LabeledField label="Customer" required hint={customerId ? undefined : "Required"}>
+            <Combobox
+              ariaLabel="Customer"
+              value={customerId}
+              onChange={(id) => { setCustomerId(id); setVehicleId(""); }}
+              options={customerOptions}
+              searchable clearable
+              placeholder="Search customers…"
+              searchPlaceholder="Search by name or phone…"
+              emptyLabel="No customers yet"
+              leading={<UserRound className="h-4 w-4" />}
+              invalid={Boolean(error) && !customerId}
+              renderOption={(o) => {
+                const c = custById.get(o.value);
+                return (
+                  <span className="flex items-center gap-2.5">
+                    <span className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-brand-500/10 text-[11px] font-bold text-brand-500">{initials(o.label)}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13.5px] font-medium text-ink">{o.label}</span>
+                      {c?.phone && <span className="block truncate text-[11.5px] text-ink3">{c.phone}</span>}
+                    </span>
+                  </span>
+                );
+              }}
+            />
+          </LabeledField>
+          {customers.length === 0 && (
+            <div className="-mt-1.5 text-[12.5px] text-warning">Add a customer first on the Customers page.</div>
+          )}
+
+          {/* Job details — service drives the job; vehicle is the customer's */}
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Vehicle">
-              <select className="input" value={vehicleId} onChange={(e) => setVehicleId(e.target.value)} disabled={!customerId}>
-                <option value="">{customerId ? "Optional…" : "Pick customer first"}</option>
-                {vehicles.map((v) => <option key={v.id} value={v.id}>{vehicleLabel(v)}</option>)}
-              </select>
-            </Field>
-            <Field label="Service">
-              <select className="input" value={serviceId} onChange={(e) => {
-                setServiceId(e.target.value);
-                const s = services.find((x) => x.id === e.target.value);
-                if (s) { if (!price) setPrice(String(s.price)); setDuration(String(s.duration_min || 60)); }
-              }}>
-                <option value="">Optional…</option>
-                {services.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            </Field>
+            <LabeledField label="Service" hint="Sets duration & price">
+              <Combobox
+                ariaLabel="Service"
+                value={serviceId}
+                onChange={pickService}
+                options={serviceOptions}
+                searchable={services.length > 6}
+                clearable
+                placeholder="Choose a service…"
+                emptyLabel="No services yet"
+                renderValue={(o) => {
+                  const s = svcById.get(o.value); if (!s) return o.label;
+                  const Icon = serviceIcon(s.name); const t = SVC_TONE[serviceTone(s.name)];
+                  return <span className="flex items-center gap-2"><Icon className={cn("h-4 w-4 flex-none", t.icon)} /><span className="truncate">{s.name}</span></span>;
+                }}
+                renderOption={(o) => {
+                  const s = svcById.get(o.value); if (!s) return o.label;
+                  const Icon = serviceIcon(s.name); const t = SVC_TONE[serviceTone(s.name)];
+                  return (
+                    <span className="flex items-center gap-2.5">
+                      <span className={cn("flex h-7 w-7 flex-none items-center justify-center rounded-lg", t.bg, t.icon)}><Icon className="h-3.5 w-3.5" /></span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13.5px] font-medium text-ink">{s.name}</span>
+                        <span className="block text-[11.5px] text-ink3">{s.duration_min} min</span>
+                      </span>
+                      <span className="flex-none text-[13px] font-semibold tnum text-ink">{money(s.price)}</span>
+                    </span>
+                  );
+                }}
+              />
+            </LabeledField>
+            <LabeledField label="Vehicle" hint={customerId && vehicles.length === 0 ? "None on file" : undefined}>
+              <Combobox
+                ariaLabel="Vehicle"
+                value={vehicleId}
+                onChange={setVehicleId}
+                options={vehicleOptions}
+                clearable
+                disabled={!customerId}
+                placeholder={customerId ? "Select vehicle…" : "Pick customer first"}
+                emptyLabel="No vehicles for this customer"
+                leading={<Car className="h-4 w-4" />}
+                renderOption={(o) => {
+                  const v = vehById.get(o.value);
+                  return (
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13.5px] font-medium text-ink">{o.label}</span>
+                      {v && (v.color || v.license_plate) && (
+                        <span className="block truncate text-[11.5px] text-ink3">{[v.color, v.license_plate].filter(Boolean).join(" · ")}</span>
+                      )}
+                    </span>
+                  );
+                }}
+              />
+            </LabeledField>
           </div>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Field label="Date & time">
-              <input type="datetime-local" className="input" value={when} onChange={(e) => setWhen(e.target.value)} />
-            </Field>
-            <Field label="Minutes">
-              <input type="number" className="input tnum" value={duration} onChange={(e) => setDuration(e.target.value)} />
-            </Field>
-            <Field label="Price ($)">
-              <input type="number" min={0} step="0.01" className="input tnum" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="0.00" />
-            </Field>
+
+          {/* Schedule — date + time, with a scannable summary */}
+          <div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <LabeledField label="Date">
+                <input type="date" className="input" value={datePart}
+                  onChange={(e) => setWhen(`${e.target.value || datePart}T${timePart || "09:00"}`)} />
+              </LabeledField>
+              <LabeledField label="Time">
+                <input type="time" className="input" value={timePart}
+                  onChange={(e) => setWhen(`${datePart}T${e.target.value || timePart}`)} />
+              </LabeledField>
+            </div>
+            {whenValid && (
+              <div className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-brand-500/[0.07] px-2.5 py-1.5 text-[12px] font-semibold text-ink2 ring-1 ring-inset ring-brand-500/15">
+                <CalendarDays className="h-3.5 w-3.5 text-brand-500" />
+                {new Date(when).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · {time(new Date(when).toISOString())}
+              </div>
+            )}
           </div>
+
+          {/* Duration + price — seeded from the service, always overridable */}
+          <div className="rounded-xl border border-line bg-panel2/60 p-3">
+            <div className="mb-2.5 flex items-center gap-2">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-ink2">Duration &amp; price</span>
+              <span className="ml-auto text-[11.5px] text-ink3">
+                {selectedService ? <>From <span className="font-medium text-ink2">{selectedService.name}</span> · editable</> : "Set manually"}
+              </span>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-medium text-ink3">Duration</span>
+                <div className="relative">
+                  <input type="number" min={0} step={5} className="input tnum pr-12" value={duration} onChange={(e) => setDuration(e.target.value)} />
+                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[12px] text-ink3">min</span>
+                </div>
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-medium text-ink3">Price</span>
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[13px] text-ink3">$</span>
+                  <input type="number" min={0} step="0.01" className="input tnum pl-7" value={price} placeholder="0.00"
+                    onChange={(e) => setPrice(e.target.value)}
+                    onBlur={() => { if (price.trim() !== "" && !Number.isNaN(Number(price))) setPrice(Number(price).toFixed(2)); }} />
+                </div>
+              </label>
+            </div>
+          </div>
+
           {conflict && (
             <div className="flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2.5 text-[12.5px] leading-relaxed text-warning ring-1 ring-inset ring-warning/25">
               <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
@@ -406,9 +566,11 @@ export default function Appointments() {
               </span>
             </div>
           )}
-          <Field label="Notes">
-            <textarea className="input" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Gate code, paint condition, customer requests…" />
-          </Field>
+
+          <LabeledField label="Notes" hint="Optional">
+            <textarea className="input" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Gate code, paint condition, customer requests…" />
+          </LabeledField>
+
           {error && <div className="rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
         </div>
       </Modal>

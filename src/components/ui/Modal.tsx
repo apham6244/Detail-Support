@@ -9,12 +9,15 @@ export function Modal({
   title,
   children,
   footer,
+  size = "md",
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   children: ReactNode;
   footer?: ReactNode;
+  /** Desktop max-width. "md" (default) = max-w-lg; "lg" = max-w-xl for roomier forms. */
+  size?: "md" | "lg";
 }) {
   // Only mount while open. We deliberately skip AnimatePresence's deferred exit:
   // combined with the body portal, its delayed unmount races with React removing
@@ -41,7 +44,10 @@ export function Modal({
         initial={{ opacity: 0, y: 24, scale: 0.99 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-        className="surface surface-raised relative z-10 flex max-h-[92dvh] w-full max-w-none flex-col overflow-hidden rounded-t-2xl sm:my-auto sm:max-h-[calc(100dvh-2rem)] sm:max-w-lg sm:rounded-2xl"
+        className={
+          "surface surface-raised relative z-10 flex max-h-[92dvh] w-full max-w-none flex-col overflow-hidden rounded-t-2xl sm:my-auto sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl " +
+          (size === "lg" ? "sm:max-w-xl" : "sm:max-w-lg")
+        }
       >
         {/* Grabber — signals the sheet, phones only. */}
         <div aria-hidden className="mx-auto mt-2 h-1 w-9 flex-none rounded-full bg-line2 sm:hidden" />
@@ -69,15 +75,21 @@ export function Modal({
 
 export function Field({
   label,
+  required,
+  hint,
   children,
 }: {
   label: string;
+  required?: boolean;
+  hint?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.06em] text-ink2">
+      <span className="mb-1.5 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink2">
         {label}
+        {required && <span className="text-danger" aria-hidden>*</span>}
+        {hint && <span className="ml-auto font-medium normal-case tracking-normal text-ink3">{hint}</span>}
       </span>
       {children}
     </label>
