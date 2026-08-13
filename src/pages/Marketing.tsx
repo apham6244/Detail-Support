@@ -1,27 +1,29 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Users, Copy, Check, Download, Send, Trash2, Info } from "lucide-react";
+import {
+  Plus, Copy, Check, Download, Send, Trash2, Info, Mail, MessageSquare,
+  FileText, Users, Pencil, Files, LayoutTemplate, type LucideIcon,
+} from "lucide-react";
 import { api as apiFetch } from "@/lib/api";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
-import { Modal, Field } from "@/components/ui/Modal";
-import { Th, Td, IconBtn, EmptyState, SignInPrompt } from "@/components/ui/data";
+import { IconBtn, EmptyState, SignInPrompt } from "@/components/ui/data";
 import { confirm, toast } from "@/components/ui/feedback";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 import { FeatureLocked } from "@/components/UpgradeGate";
+import { CampaignComposer } from "@/components/marketing/CampaignComposer";
 import { useEntitlements } from "@/lib/entitlements";
 import { useAuth } from "@/lib/auth";
-import { useCampaigns, type CampaignInput } from "@/hooks/useCampaigns";
+import { useCampaigns } from "@/hooks/useCampaigns";
 import { useCustomers } from "@/hooks/useCustomers";
 import { useAppointments } from "@/hooks/useAppointments";
-import { SEGMENTS, segmentLabel, customersInSegment, renderMessage, reachable, toCsv, type SegmentKey } from "@/lib/segments";
+import { segmentLabel, customersInSegment, reachable, toCsv, type SegmentKey } from "@/lib/segments";
 import { CAMPAIGN_STATUS_LABEL, type Campaign } from "@/lib/models";
 import { cn } from "@/lib/cn";
 
 const fmtDate = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—";
 
-const DEFAULT_MSG =
-  "Hi [Customer Name], it's been a while since your last detail at [Business Name]. Book this month and we'll take great care of your car.";
+type Delivery = { email: { provider: string; live: boolean }; sms: { provider: string; live: boolean } } | null;
 
 export default function Marketing() {
   const ent = useEntitlements();
@@ -32,39 +34,32 @@ export default function Marketing() {
 
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Campaign | null>(null);
-  const [name, setName] = useState("");
-  const [segment, setSegment] = useState<SegmentKey>("lapsed_90");
-  const [channel, setChannel] = useState("email");
-  const [subject, setSubject] = useState("");
-  const [message, setMessage] = useState(DEFAULT_MSG);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [startTemplates, setStartTemplates] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [sending, setSending] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ kind: "ok" | "warn"; text: string } | null>(null);
-  const [delivery, setDelivery] = useState<{ email: { provider: string; live: boolean }; sms: { provider: string; live: boolean } } | null>(null);
+  const [delivery, setDelivery] = useState<Delivery>(null);
 
   const businessName = org?.name ?? "our shop";
 
   // Ask the server what's actually wired, so the page never over-promises.
   useEffect(() => {
     let on = true;
-    apiFetch<typeof delivery>("/notify/status")
+    apiFetch<Delivery>("/notify/status")
       .then((d) => on && setDelivery(d))
       .catch(() => on && setDelivery(null));
     return () => { on = false; };
   }, []);
 
-  const counts = useMemo(() => {
-    const m: Record<string, number> = {};
-    for (const s of SEGMENTS) m[s.key] = customersInSegment(s.key, customers, appointments).length;
-    return m;
-  }, [customers, appointments]);
+  const listFor = (c: Campaign) => reachable(customersInSegment(c.segment as SegmentKey, customers, appointments), c.channel);
 
-  const recipients = useMemo(
-    () => reachable(customersInSegment(segment, customers, appointments), channel),
-    [segment, channel, customers, appointments]
-  );
+  // Real campaign metrics — nothing fabricated (the schema tracks draft/sent).
+  const stats = useMemo(() => {
+    const drafts = api.campaigns.filter((c) => c.status === "draft").length;
+    const sent = api.campaigns.filter((c) => c.status === "sent").length;
+    const delivered = api.campaigns.reduce((s, c) => s + (c.status === "sent" ? c.recipient_count ?? 0 : 0), 0);
+    return { drafts, sent, delivered, customers: customers.length };
+  }, [api.campaigns, customers.length]);
 
   if (ent.loading) return <PageSkeleton variant="table" kpis={4} />;
   if (!ent.hasFeature("marketing")) {
@@ -81,45 +76,16 @@ export default function Marketing() {
   }
   if (!api.ready) return <SignInPrompt what="marketing" />;
 
-  const openNew = () => {
-    setEditing(null);
-    setName("");
-    setSegment("lapsed_90");
-    setChannel("email");
-    setSubject("");
-    setMessage(DEFAULT_MSG);
-    setError(null);
-    setOpen(true);
-  };
+  const openNew = () => { setEditing(null); setStartTemplates(false); setOpen(true); };
+  const openTemplates = () => { setEditing(null); setStartTemplates(true); setOpen(true); };
+  const openEdit = (c: Campaign) => { setEditing(c); setStartTemplates(false); setOpen(true); };
 
-  const openEdit = (c: Campaign) => {
-    setEditing(c);
-    setName(c.name);
-    setSegment(c.segment as SegmentKey);
-    setChannel(c.channel);
-    setSubject(c.subject ?? "");
-    setMessage(c.message);
-    setError(null);
-    setOpen(true);
-  };
-
-  const save = async () => {
-    if (!name.trim()) return setError("Give the campaign a name.");
-    setBusy(true);
-    setError(null);
+  const duplicate = async (c: Campaign) => {
     try {
-      const input: CampaignInput = { name, segment, channel, subject: subject || null, message };
-      if (editing) await api.update(editing.id, input);
-      else await api.create(input);
-      setOpen(false);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
+      await api.create({ name: `${c.name} (copy)`, segment: c.segment, channel: c.channel, subject: c.subject, message: c.message });
+      toast.success("Campaign duplicated");
+    } catch (e) { toast.error((e as Error).message); }
   };
-
-  const listFor = (c: Campaign) => reachable(customersInSegment(c.segment as SegmentKey, customers, appointments), c.channel);
 
   const copyList = async (c: Campaign) => {
     const list = listFor(c);
@@ -139,30 +105,50 @@ export default function Marketing() {
     URL.revokeObjectURL(url);
   };
 
+  const sendCampaign = async (c: Campaign) => {
+    const list = listFor(c);
+    setNotice(null);
+    if (!delivery) {
+      if (!(await confirm({ title: `Mark “${c.name}” as sent?`, body: `Records this campaign as delivered to ${list.length} recipient${list.length === 1 ? "" : "s"}.`, confirmLabel: "Mark as sent" }))) return;
+      await api.markSent(c.id, list.length);
+      toast.success("Campaign marked as sent");
+      return;
+    }
+    if (!(await confirm({ title: `Send “${c.name}”?`, body: `This sends to ${list.length} ${c.channel === "sms" ? "phone" : "email"} recipient${list.length === 1 ? "" : "s"} right now.`, confirmLabel: "Send campaign" }))) return;
+    setSending(c.id);
+    try {
+      const r = await api.send(c.id);
+      setNotice({
+        kind: r.failed > 0 ? "warn" : "ok",
+        text: `“${c.name}” sent to ${r.sent} of ${r.audience} via ${r.provider}.` +
+          (r.failed ? ` ${r.failed} failed.` : "") +
+          (r.skipped ? ` ${r.skipped} skipped (no ${c.channel === "sms" ? "phone" : "email"}).` : ""),
+      });
+    } catch (e) {
+      setNotice({ kind: "warn", text: (e as Error).message });
+    } finally { setSending(null); }
+  };
+
+  const removeCampaign = async (c: Campaign) => {
+    if (await confirm({ title: `Delete “${c.name}”?`, body: "This permanently removes the campaign.", confirmLabel: "Delete campaign", tone: "danger" })) {
+      try { await api.remove(c.id); toast.success("Campaign deleted"); } catch (e) { toast.error((e as Error).message); }
+    }
+  };
+
   return (
     <div className="animate-fade-up">
       <PageHeader
-        title="Marketing"
-        subtitle="Bring customers back with targeted campaigns"
-        actions={
-          <Button variant="primary" icon={<Plus />} onClick={openNew}>
-            New campaign
-          </Button>
-        }
+        title="Campaigns"
+        subtitle="Turn your customer list into repeat business"
+        actions={<Button variant="primary" icon={<Plus />} onClick={openNew}>New campaign</Button>}
       />
 
-      {/* Segments — borderless band, dividers instead of cards */}
-      <div className="mb-6 grid grid-cols-2 gap-x-4 gap-y-7 border-y border-line py-6 lg:grid-cols-4 lg:gap-x-0 lg:divide-x lg:divide-line">
-        {SEGMENTS.map((s) => (
-          <div key={s.key} className="lg:px-6 lg:first:pl-0 lg:last:pr-0">
-            <div className="flex items-center gap-1.5">
-              <Users className="h-4 w-4 text-brand-500" />
-              <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-ink3">{s.label}</span>
-            </div>
-            <div className="mt-2 font-display text-[27px] font-bold leading-none tnum text-ink">{counts[s.key] ?? 0}</div>
-            <div className="mt-2 text-xs text-ink3">{s.description}</div>
-          </div>
-        ))}
+      {/* Dashboard — real metrics only */}
+      <div className="mb-5 grid grid-cols-2 gap-2.5 sm:grid-cols-4 sm:gap-3">
+        <StatCard icon={FileText} tone="blue" label="Drafts" value={String(stats.drafts)} />
+        <StatCard icon={Send} tone="green" label="Sent" value={String(stats.sent)} />
+        <StatCard icon={Mail} tone="purple" label="Messages delivered" value={stats.delivered.toLocaleString()} />
+        <StatCard icon={Users} tone="orange" label="Customers reached" value={stats.customers.toLocaleString()} />
       </div>
 
       {notice && (
@@ -185,9 +171,7 @@ export default function Marketing() {
           ) : (
             <span>
               Sends run through the server but the provider is set to <b>console</b>, so messages are{" "}
-              <b>logged, not delivered</b>. Set <code>EMAIL_PROVIDER=sendgrid</code> (and{" "}
-              <code>SMS_PROVIDER=twilio</code>) to go live. You can still <b>copy the list</b> or{" "}
-              <b>export a CSV</b> to send from your own tool.
+              <b>logged, not delivered</b>. You can still <b>copy the list</b> or <b>export a CSV</b> to send from your own tool.
             </span>
           )
         ) : (
@@ -204,181 +188,120 @@ export default function Marketing() {
       ) : api.campaigns.length === 0 ? (
         <EmptyState
           art="megaphone"
-          title="No campaigns yet"
-          body="Pick a segment — lapsed customers are the easiest win — and write a message that brings them back."
+          title="Turn your customer list into repeat business"
+          body="Create a campaign to bring customers back, promote your services, or stay connected — no writing from scratch required."
           action={
-            <Button variant="primary" icon={<Plus />} onClick={openNew}>
-              New campaign
-            </Button>
+            <div className="flex flex-col items-center gap-2 sm:flex-row">
+              <Button variant="primary" icon={<Plus />} onClick={openNew}>Create campaign</Button>
+              <Button icon={<LayoutTemplate />} onClick={openTemplates}>Browse templates</Button>
+            </div>
           }
         />
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] border-collapse text-[13px]">
-            <thead>
-              <tr className="bg-panel2 text-left text-[11px] uppercase tracking-[0.07em] text-ink3">
-                <Th>Campaign</Th>
-                <Th>Segment</Th>
-                <Th>Recipients</Th>
-                <Th>Status</Th>
-                <Th>Sent</Th>
-                <Th className="w-[150px]" />
-              </tr>
-            </thead>
-            <tbody>
-              {api.campaigns.map((c) => {
-                const list = listFor(c);
-                return (
-                  <tr key={c.id} className="border-b border-line2 last:border-b-0">
-                      <Td>
-                        <button className="font-semibold text-ink hover:text-brand-500" onClick={() => openEdit(c)}>
-                          {c.name}
-                        </button>
-                      </Td>
-                      <Td className="text-ink2">{segmentLabel(c.segment)}</Td>
-                      <Td className="tnum">{c.status === "sent" ? c.recipient_count : list.length}</Td>
-                      <Td>
-                        <span
-                          className={cn(
-                            "rounded-full px-2.5 py-1 text-[11px] font-semibold",
-                            c.status === "sent" ? "bg-success/10 text-success" : "bg-line2 text-ink2"
-                          )}
-                        >
-                          {CAMPAIGN_STATUS_LABEL[c.status]}
-                        </span>
-                      </Td>
-                      <Td className="text-ink2">{fmtDate(c.sent_at)}</Td>
-                      <Td>
-                        <div className="flex items-center justify-end gap-1">
-                          <IconBtn label="Copy recipients" onClick={() => copyList(c)}>
-                            {copied === c.id ? <Check className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
-                          </IconBtn>
-                          <IconBtn label="Export CSV" onClick={() => exportCsv(c)}>
-                            <Download className="h-4 w-4" />
-                          </IconBtn>
-                          {c.status === "draft" && (
-                            <IconBtn
-                              label={delivery ? "Send campaign" : "Mark as sent"}
-                              disabled={sending === c.id}
-                              onClick={async () => {
-                                setNotice(null);
-                                if (!delivery) {
-                                  // No API — fall back to recording it manually.
-                                  if (!(await confirm({ title: `Mark “${c.name}” as sent?`, body: `Records this campaign as delivered to ${list.length} recipient${list.length === 1 ? "" : "s"}.`, confirmLabel: "Mark as sent" }))) return;
-                                  await api.markSent(c.id, list.length);
-                                  toast.success("Campaign marked as sent");
-                                  return;
-                                }
-                                if (!(await confirm({ title: `Send “${c.name}”?`, body: `This sends to ${list.length} ${c.channel === "sms" ? "phone" : "email"} recipient${list.length === 1 ? "" : "s"} right now.`, confirmLabel: "Send campaign" }))) return;
-                                setSending(c.id);
-                                try {
-                                  const r = await api.send(c.id);
-                                  setNotice({
-                                    kind: r.failed > 0 ? "warn" : "ok",
-                                    text: `“${c.name}” sent to ${r.sent} of ${r.audience} via ${r.provider}.` +
-                                      (r.failed ? ` ${r.failed} failed.` : "") +
-                                      (r.skipped ? ` ${r.skipped} skipped (no ${c.channel === "sms" ? "phone" : "email"}).` : ""),
-                                  });
-                                } catch (e) {
-                                  setNotice({ kind: "warn", text: (e as Error).message });
-                                } finally {
-                                  setSending(null);
-                                }
-                              }}
-                            >
-                              <Send className="h-4 w-4" />
-                            </IconBtn>
-                          )}
-                          <IconBtn
-                            label="Delete"
-                            danger
-                            onClick={async () => { if (await confirm({ title: `Delete “${c.name}”?`, body: "This permanently removes the campaign.", confirmLabel: "Delete campaign", tone: "danger" })) { try { await api.remove(c.id); toast.success("Campaign deleted"); } catch (e) { toast.error((e as Error).message); } } }}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </IconBtn>
-                        </div>
-                      </Td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {api.campaigns.map((c) => (
+            <CampaignCard
+              key={c.id}
+              c={c}
+              recipients={c.status === "sent" ? (c.recipient_count ?? 0) : listFor(c).length}
+              copied={copied === c.id}
+              sending={sending === c.id}
+              delivery={Boolean(delivery)}
+              onEdit={() => openEdit(c)}
+              onDuplicate={() => duplicate(c)}
+              onCopy={() => copyList(c)}
+              onExport={() => exportCsv(c)}
+              onSend={() => sendCampaign(c)}
+              onDelete={() => removeCampaign(c)}
+            />
+          ))}
         </div>
       )}
 
-      {/* Composer */}
-      <Modal
+      <CampaignComposer
         open={open}
         onClose={() => setOpen(false)}
-        title={editing ? "Edit campaign" : "New campaign"}
-        footer={
-          <>
-            <Button onClick={() => setOpen(false)}>Cancel</Button>
-            <Button variant="primary" onClick={save} disabled={busy}>
-              {busy ? "Saving…" : editing ? "Save changes" : "Create campaign"}
-            </Button>
-          </>
-        }
-      >
-        <div className="flex flex-col gap-4">
-          <Field label="Campaign name">
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="July win-back" />
-          </Field>
+        editing={editing}
+        businessName={businessName}
+        customers={customers}
+        appointments={appointments}
+        delivery={delivery}
+        startOnTemplates={startTemplates}
+        onCreate={api.create}
+        onUpdate={api.update}
+        onSendNow={api.send}
+        onSaved={(msg) => { toast.success(msg); }}
+      />
+    </div>
+  );
+}
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Audience">
-              <select className="input" value={segment} onChange={(e) => setSegment(e.target.value as SegmentKey)}>
-                {SEGMENTS.map((s) => (
-                  <option key={s.key} value={s.key}>
-                    {s.label} ({counts[s.key] ?? 0})
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Channel">
-              <select className="input" value={channel} onChange={(e) => setChannel(e.target.value)}>
-                <option value="email">Email</option>
-                <option value="sms">SMS</option>
-              </select>
-            </Field>
-          </div>
+// --------------------------------------------------------------- components
 
-          {channel === "email" && (
-            <Field label="Subject">
-              <input className="input" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="We miss your car" />
-            </Field>
-          )}
+const TONE: Record<string, { bg: string; icon: string }> = {
+  blue: { bg: "bg-brand-500/10", icon: "text-brand-500" },
+  green: { bg: "bg-success/10", icon: "text-success" },
+  purple: { bg: "bg-violet/10", icon: "text-violet" },
+  orange: { bg: "bg-warning/10", icon: "text-warning" },
+};
 
-          <Field label="Message">
-            <textarea className="input" rows={4} value={message} onChange={(e) => setMessage(e.target.value)} />
-          </Field>
-          <div className="-mt-2 text-[11.5px] text-ink3">
-            Variables: <code className="rounded bg-panel2 px-1">[Customer Name]</code>{" "}
-            <code className="rounded bg-panel2 px-1">[First Name]</code>{" "}
-            <code className="rounded bg-panel2 px-1">[Business Name]</code>
-          </div>
+function StatCard({ icon: Icon, tone, label, value }: { icon: LucideIcon; tone: keyof typeof TONE; label: string; value: string }) {
+  const t = TONE[tone];
+  return (
+    <div className="surface rounded-xl p-3">
+      <div className="flex items-center gap-2">
+        <span className={cn("flex h-7 w-7 flex-none items-center justify-center rounded-lg", t.bg, t.icon)}><Icon className="h-3.5 w-3.5" /></span>
+        <span className="truncate text-[10.5px] font-semibold uppercase tracking-[0.06em] text-ink3">{label}</span>
+      </div>
+      <div className="mt-2 truncate font-display text-[19px] font-bold leading-none tracking-tight tnum text-ink">{value}</div>
+    </div>
+  );
+}
 
-          {/* Live preview */}
-          <div className="rounded-xl border border-line bg-panel2/60 p-3.5">
-            <div className="mb-1.5 flex items-center justify-between">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-ink3">Preview</span>
-              <span className="text-[11.5px] font-semibold text-brand-500">
-                {recipients.length} recipient{recipients.length === 1 ? "" : "s"}
-              </span>
-            </div>
-            <div className="text-[13px] text-ink">
-              {renderMessage(message, recipients[0]?.name ?? "Jordan Reyes", businessName)}
-            </div>
-            {recipients.length === 0 && (
-              <div className="mt-2 text-[12px] text-warning">
-                No one in this segment has {channel === "sms" ? "a phone number" : "an email"} on file.
-              </div>
-            )}
-          </div>
+function CampaignCard({ c, recipients, copied, sending, delivery, onEdit, onDuplicate, onCopy, onExport, onSend, onDelete }: {
+  c: Campaign; recipients: number; copied: boolean; sending: boolean; delivery: boolean;
+  onEdit: () => void; onDuplicate: () => void; onCopy: () => void; onExport: () => void; onSend: () => void; onDelete: () => void;
+}) {
+  const isSent = c.status === "sent";
+  const ChannelIcon = c.channel === "sms" ? MessageSquare : Mail;
+  return (
+    <div className="surface group flex flex-col rounded-2xl p-4 transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-card">
+      <div className="flex items-start gap-2">
+        <button onClick={onEdit} className="min-w-0 flex-1 text-left">
+          <span className="block truncate font-display text-[15px] font-bold tracking-tight text-ink group-hover:text-brand-500">{c.name}</span>
+        </button>
+        <span className={cn("flex-none rounded-full px-2.5 py-1 text-[11px] font-semibold",
+          isSent ? "bg-success/10 text-success" : "bg-line2 text-ink2")}>
+          {CAMPAIGN_STATUS_LABEL[c.status]}
+        </span>
+      </div>
 
-          {error && <div className="rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
+      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+        <span className="inline-flex items-center gap-1 rounded-md bg-panel2 px-2 py-0.5 text-[11px] font-medium text-ink2">
+          <ChannelIcon className="h-3 w-3" />{c.channel === "sms" ? "SMS" : "Email"}
+        </span>
+        <span className="inline-flex items-center gap-1 rounded-md bg-panel2 px-2 py-0.5 text-[11px] font-medium text-ink2">
+          <Users className="h-3 w-3" />{segmentLabel(c.segment)}
+        </span>
+      </div>
+
+      <div className="mt-3 flex items-center gap-4 border-t border-line pt-3 text-[12px] text-ink3">
+        <span><b className="tnum text-ink">{recipients}</b> recipient{recipients === 1 ? "" : "s"}</span>
+        <span className="ml-auto">{isSent ? `Sent ${fmtDate(c.sent_at)}` : `Created ${fmtDate(c.created_at)}`}</span>
+      </div>
+
+      <div className="mt-2 flex items-center gap-0.5">
+        <IconBtn label="Edit" onClick={onEdit}><Pencil className="h-4 w-4" /></IconBtn>
+        <IconBtn label="Duplicate" onClick={onDuplicate}><Files className="h-4 w-4" /></IconBtn>
+        <IconBtn label="Copy recipients" onClick={onCopy}>{copied ? <Check className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}</IconBtn>
+        <IconBtn label="Export CSV" onClick={onExport}><Download className="h-4 w-4" /></IconBtn>
+        {!isSent && (
+          <IconBtn label={delivery ? "Send campaign" : "Mark as sent"} disabled={sending} onClick={onSend}><Send className="h-4 w-4" /></IconBtn>
+        )}
+        <div className="ml-auto">
+          <IconBtn label="Delete" danger onClick={onDelete}><Trash2 className="h-4 w-4" /></IconBtn>
         </div>
-      </Modal>
+      </div>
     </div>
   );
 }
