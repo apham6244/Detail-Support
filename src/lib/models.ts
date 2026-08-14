@@ -208,6 +208,9 @@ export interface Quote {
   tax: number;
   total: number;
   notes: string | null;
+  /** Private staff-only note — ships in migration 028, so optional on
+   *  un-migrated databases (a `select("*")` simply omits it). */
+  internal_notes?: string | null;
   valid_until: string | null;
   sent_at: string | null;
   accepted_at: string | null;

@@ -14,6 +14,7 @@ import {
   Phone,
   Car,
   Loader2,
+  EyeOff,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
@@ -82,6 +83,7 @@ export default function Quotes() {
   const [taxRate, setTaxRate] = useState("");
   const [validUntil, setValidUntil] = useState("");
   const [notes, setNotes] = useState("");
+  const [internalNotes, setInternalNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tried, setTried] = useState(false);
@@ -148,6 +150,7 @@ export default function Quotes() {
     setTaxRate(defaultTaxRate != null ? String(defaultTaxRate) : "");
     setValidUntil("");
     setNotes("");
+    setInternalNotes("");
     setError(null);
     setTried(false);
   };
@@ -175,6 +178,7 @@ export default function Quotes() {
     setTaxRate(q.tax && base > 0 ? String(Math.round((q.tax / base) * 10000) / 100) : "");
     setValidUntil(q.valid_until ? q.valid_until.slice(0, 10) : "");
     setNotes(q.notes ?? "");
+    setInternalNotes(q.internal_notes ?? "");
     setError(null);
     setTried(false);
     setDetailId(null);
@@ -209,6 +213,7 @@ export default function Quotes() {
         discount: Math.round(discountAmount * 100) / 100,
         tax: Math.round(taxAmount * 100) / 100,
         notes: notes || null,
+        internal_notes: internalNotes || null,
         valid_until: validUntil || null,
         lines: validLines.map((l) => ({
           service_id: l.service_id,
@@ -518,6 +523,10 @@ export default function Quotes() {
             <textarea className="input" rows={2} placeholder="Anything the customer should know — inclusions, prep, terms…" value={notes} onChange={(e) => setNotes(e.target.value)} />
           </FieldBlock>
 
+          <FieldBlock label="Internal note" hint="Staff only — never shown to the customer">
+            <textarea className="input" rows={2} placeholder="Private reference — pricing rationale, prep reminders, upsell ideas…" value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} />
+          </FieldBlock>
+
           {error && <div className="rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
         </div>
       </Modal>
@@ -638,6 +647,15 @@ function QuoteDetail({
         </div>
 
         {quote.notes && <div className="rounded-lg bg-panel2 px-3 py-2 text-[13px] text-ink2">{quote.notes}</div>}
+
+        {quote.internal_notes && (
+          <div className="rounded-lg border border-warning/30 bg-warning/[0.07] px-3 py-2 text-[13px] text-ink2">
+            <div className="mb-1 flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.06em] text-warning">
+              <EyeOff className="h-3.5 w-3.5" /> Internal note · not shown to the customer
+            </div>
+            <div className="whitespace-pre-wrap">{quote.internal_notes}</div>
+          </div>
+        )}
 
         {/* Conversion status */}
         {(quote.converted_invoice_id || quote.converted_appointment_id) && (
