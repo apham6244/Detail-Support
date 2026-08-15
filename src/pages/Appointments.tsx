@@ -1,4 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
+import { motion } from "framer-motion";
 import {
   Plus, Trash2, UserRound, ChevronLeft, ChevronRight,
   Clock, Bell, BellPlus, Car, Wrench, StickyNote, Send, AlertTriangle,
@@ -108,6 +109,13 @@ function defaultWhen() { const d = new Date(); d.setHours(d.getHours() + 1, 0, 0
 const initials = (name: string) =>
   name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("") || "?";
 
+/** One-thing-at-a-time booking wizard — same slide pattern as Add Service. */
+const BOOK_STEPS = ["Customer", "Service", "Schedule", "Review"] as const;
+const stepSlide = {
+  enter: (d: number) => ({ opacity: 0, x: d >= 0 ? 32 : -32 }),
+  center: { opacity: 1, x: 0 },
+};
+
 /** Booking-form field wrapper: a div-based label (so it can safely contain
  *  button-driven Comboboxes) with an optional required marker and right hint. */
 function LabeledField({ label, required, hint, children }: {
@@ -153,6 +161,8 @@ export default function Appointments() {
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [bookStep, setBookStep] = useState(0);
+  const [bookDir, setBookDir] = useState(1);
   const { vehicles } = useVehicles(customerId || null);
 
   const byDay = useMemo(() => {
@@ -230,6 +240,7 @@ export default function Appointments() {
     setCustomerId(""); setVehicleId(""); setServiceId("");
     setWhen(at ? toLocalInput(new Date(at.setHours(9, 0, 0, 0))) : defaultWhen());
     setDuration("60"); setPrice(""); setNotes(""); setError(null);
+    setBookStep(0); setBookDir(1);
     setFormOpen(true);
   };
 
@@ -243,6 +254,8 @@ export default function Appointments() {
     setPrice(a.price != null ? String(a.price) : "");
     setNotes(a.notes ?? "");
     setError(null);
+    setBookStep(0);
+    setBookDir(1);
     setDetail(null);
     setFormOpen(true);
   };
@@ -259,6 +272,8 @@ export default function Appointments() {
     setPrice(a.price != null ? String(a.price) : "");
     setNotes(a.notes ?? "");
     setError(null);
+    setBookStep(0);
+    setBookDir(1);
     setDetail(null);
     setFormOpen(true);
   };
@@ -283,6 +298,13 @@ export default function Appointments() {
       toast.success(editing ? "Job updated" : "Job booked");
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   };
+
+  // Wizard: per-step validity, and slide navigation that preserves all input.
+  const selectedVehicle = vehById.get(vehicleId) ?? null;
+  const bookStepValid = [Boolean(customerId), Boolean(serviceId), whenValid && Number(duration) > 0, true];
+  const gotoBook = (n: number, d: number) => { setBookDir(d); setBookStep(Math.max(0, Math.min(BOOK_STEPS.length - 1, n))); };
+  const nextBook = () => { if (bookStepValid[bookStep]) gotoBook(bookStep + 1, 1); };
+  const backBook = () => gotoBook(bookStep - 1, -1);
 
   const shift = (dir: number) => {
     const d = new Date(cursor);
@@ -412,13 +434,36 @@ export default function Appointments() {
       {/* Create / edit */}
       <Modal open={formOpen} onClose={() => setFormOpen(false)} size="lg" title={editing ? "Edit job" : "Book job"}
         footer={<>
-          <Button onClick={() => setFormOpen(false)}>Cancel</Button>
-          <Button variant="primary" onClick={save} disabled={busy || !customerId || !whenValid}
-            icon={busy ? <Loader2 className="animate-spin" /> : undefined}>
-            {busy ? (editing ? "Saving…" : "Booking…") : editing ? "Save changes" : "Book job"}
-          </Button>
+          {bookStep === 0
+            ? <Button onClick={() => setFormOpen(false)}>Cancel</Button>
+            : <Button onClick={backBook} disabled={busy}>Back</Button>}
+          {bookStep < BOOK_STEPS.length - 1
+            ? <Button variant="primary" onClick={nextBook} disabled={!bookStepValid[bookStep]}>Continue</Button>
+            : <Button variant="primary" onClick={save} disabled={busy || !customerId || !whenValid}
+                icon={busy ? <Loader2 className="animate-spin" /> : undefined}>
+                {busy ? (editing ? "Saving…" : "Booking…") : editing ? "Save changes" : "Book job"}
+              </Button>}
         </>}>
         <div className="flex flex-col gap-4">
+          {/* Progress — ● ━ ● ━ ○ ━ ○ + "Step N of 4" */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              {BOOK_STEPS.map((_, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  <span className={cn("h-2 w-2 flex-none rounded-full transition-colors", i <= bookStep ? "bg-brand-500" : "bg-line2")} />
+                  {i < BOOK_STEPS.length - 1 && <span className={cn("h-px w-4 flex-none transition-colors", i < bookStep ? "bg-brand-500/50" : "bg-line")} />}
+                </div>
+              ))}
+            </div>
+            <span className="text-[11.5px] font-semibold text-ink3">Step {bookStep + 1} of {BOOK_STEPS.length}</span>
+          </div>
+
+          {/* Sliding step content — min-height keeps the modal from jumping */}
+          <div className="min-h-[248px]">
+            <motion.div key={bookStep} custom={bookDir} variants={stepSlide} initial="enter" animate="center"
+              transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }} className="flex flex-col gap-4">
+
+          {bookStep === 0 && (<>
           {/* Customer — the anchor: required, searchable */}
           <LabeledField label="Customer" required hint={customerId ? undefined : "Required"}>
             <Combobox
@@ -449,7 +494,9 @@ export default function Appointments() {
           {customers.length === 0 && (
             <div className="-mt-1.5 text-[12.5px] text-warning">Add a customer first on the Customers page.</div>
           )}
+          </>)}
 
+          {bookStep === 1 && (<>
           {/* Job details — service drives the job; vehicle is the customer's */}
           <div className="grid gap-4 sm:grid-cols-2">
             <LabeledField label="Service" hint="Sets duration & price">
@@ -508,7 +555,9 @@ export default function Appointments() {
               />
             </LabeledField>
           </div>
+          </>)}
 
+          {bookStep === 2 && (<>
           {/* Schedule — date + time, with a scannable summary */}
           <div>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -556,6 +605,28 @@ export default function Appointments() {
               </label>
             </div>
           </div>
+          </>)}
+
+          {bookStep === 3 && (<>
+            {/* Review — a clean summary of the booking before submitting */}
+            <div className="rounded-xl border border-line bg-panel2/40 p-3.5">
+              <div className="flex flex-col gap-2 text-[13px]">
+                {([
+                  ["Customer", custById.get(customerId)?.name ?? "—"],
+                  ["Service", selectedService?.name ?? "No service"],
+                  ["Vehicle", selectedVehicle ? vehicleLabel(selectedVehicle) : "None"],
+                  ["Date", whenValid ? new Date(when).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "—"],
+                  ["Time", whenValid ? time(new Date(when).toISOString()) : "—"],
+                  ["Duration", `${Number(duration) || 0} min`],
+                  ["Price", price ? money(Number(price)) : "—"],
+                ] as [string, string][]).map(([l, v]) => (
+                  <div key={l} className="flex items-baseline justify-between gap-3">
+                    <span className="flex-none text-[11px] font-semibold uppercase tracking-[0.06em] text-ink3">{l}</span>
+                    <span className="min-w-0 truncate text-right text-[13px] font-medium text-ink">{v}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
 
           {conflict && (
             <div className="flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2.5 text-[12.5px] leading-relaxed text-warning ring-1 ring-inset ring-warning/25">
@@ -570,6 +641,10 @@ export default function Appointments() {
           <LabeledField label="Notes" hint="Optional">
             <textarea className="input" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Gate code, paint condition, customer requests…" />
           </LabeledField>
+          </>)}
+
+            </motion.div>
+          </div>
 
           {error && <div className="rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
         </div>
