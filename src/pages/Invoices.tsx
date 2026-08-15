@@ -5,11 +5,13 @@ import {
   Plus, FileText, Trash2, Send, X, Clock, DollarSign, Search, SlidersHorizontal,
   Download, MoreHorizontal, Eye, CheckCircle2, Copy, AlertCircle, TrendingUp,
   TrendingDown, Receipt, Wallet, CalendarDays, MailCheck, Printer, Loader2,
+  UserRound, Car, ReceiptText, CalendarClock, StickyNote, Lock, Mail, Phone,
   type LucideIcon,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
-import { Modal, Field } from "@/components/ui/Modal";
+import { Modal } from "@/components/ui/Modal";
+import { Combobox } from "@/components/ui/Combobox";
 import { EmptyState, NoResults, SignInPrompt, money } from "@/components/ui/data";
 import { confirm, toast } from "@/components/ui/feedback";
 import { PageSkeleton } from "@/components/ui/Skeleton";
@@ -17,15 +19,18 @@ import { CountUp } from "@/components/ui/CountUp";
 import { InvoiceDocument } from "@/components/invoice/InvoiceDocument";
 import { useInvoices, type NewInvoice } from "@/hooks/useInvoices";
 import { useCustomers } from "@/hooks/useCustomers";
+import { useServices } from "@/hooks/useServices";
+import { useVehicles } from "@/hooks/useVehicles";
+import { useWorkspace } from "@/hooks/useWorkspace";
 import { useEntitlements } from "@/lib/entitlements";
 import { FeatureLocked } from "@/components/UpgradeGate";
-import { INVOICE_STATUS_LABEL, type Invoice, type InvoiceLineItem, type InvoiceStatus } from "@/lib/models";
+import { INVOICE_STATUS_LABEL, vehicleLabel, type Invoice, type InvoiceLineItem, type InvoiceStatus } from "@/lib/models";
 import { cn } from "@/lib/cn";
 
 const STATUSES: InvoiceStatus[] = ["unpaid", "deposit_paid", "balance_due", "paid"];
 
-type LineRow = { description: string; quantity: number; unit_price: number };
-const blankLine = (): LineRow => ({ description: "", quantity: 1, unit_price: 0 });
+type LineRow = { id: string; service_id: string | null; description: string; quantity: number; unit_price: number };
+const blankLine = (): LineRow => ({ id: crypto.randomUUID(), service_id: null, description: "", quantity: 1, unit_price: 0 });
 
 // ---- derived helpers -------------------------------------------------------
 
@@ -86,6 +91,8 @@ const RANGES: { key: RangeKey; label: string }[] = [
 export default function Invoices() {
   const { invoices, loading, ready, create, setStatus, markSent, remove, getLineItems } = useInvoices();
   const { customers } = useCustomers();
+  const { services } = useServices();
+  const { ws } = useWorkspace();
   const ent = useEntitlements();
 
   const [open, setOpen] = useState(false);
@@ -105,16 +112,47 @@ export default function Invoices() {
 
   // new-invoice form
   const [customerId, setCustomerId] = useState("");
+  const [vehicleId, setVehicleId] = useState("");
   const [lines, setLines] = useState<LineRow[]>([blankLine()]);
-  const [tax, setTax] = useState("");
+  const [taxRate, setTaxRate] = useState("");
   const [deposit, setDeposit] = useState("");
+  const [dueDate, setDueDate] = useState("");
   const [notes, setNotes] = useState("");
+  const [internalNotes, setInternalNotes] = useState("");
+  const [tried, setTried] = useState(false);
+
+  const { vehicles } = useVehicles(customerId || null);
+
+  const taxLabel = (ws?.settings?.tax_label || "Sales tax").trim() || "Sales tax";
+  const defaultTaxRate = ws?.settings?.tax_enabled ? ws?.settings?.tax_rate ?? null : null;
+  const num = (s: string) => { const n = Number(s); return Number.isFinite(n) ? n : 0; };
+  const todayStr = new Date().toISOString().slice(0, 10);
 
   const subtotal = useMemo(
     () => lines.reduce((s, l) => s + (Number(l.quantity) || 0) * (Number(l.unit_price) || 0), 0),
     [lines]
   );
-  const total = subtotal + (Number(tax) || 0);
+  const taxRateNum = Math.max(0, num(taxRate));
+  const taxAmount = (subtotal * taxRateNum) / 100;
+  const total = subtotal + taxAmount;
+  const depositAmount = Math.max(0, num(deposit));
+  const amountDue = Math.max(0, total - depositAmount);
+  const invoicePaid = total > 0 && depositAmount >= total;
+  const partiallyPaid = depositAmount > 0 && !invoicePaid;
+
+  const validLines = lines.filter((l) => l.description.trim() && (Number(l.quantity) || 0) > 0);
+  const problems = {
+    customer: !customerId,
+    lines: validLines.length === 0,
+    qty: lines.some((l) => l.description.trim() && (Number(l.quantity) || 0) <= 0),
+    price: lines.some((l) => Number(l.unit_price) < 0),
+    tax: taxRateNum < 0,
+    deposit: num(deposit) < 0,
+  };
+  const hasBlocking = Object.values(problems).some(Boolean);
+
+  const selectedCustomer = customers.find((c) => c.id === customerId) ?? null;
+  const selectedVehicle = vehicles.find((v) => v.id === vehicleId) ?? null;
 
   const months = useMemo(() => lastMonths(6), []);
 
@@ -189,25 +227,33 @@ export default function Invoices() {
   }, [invoices]);
 
   const openNew = () => {
-    setCustomerId(""); setLines([blankLine()]); setTax(""); setDeposit(""); setNotes("");
-    setError(null); setOpen(true);
+    setCustomerId(""); setVehicleId(""); setLines([blankLine()]);
+    setTaxRate(defaultTaxRate != null ? String(defaultTaxRate) : "");
+    setDeposit(""); setDueDate(todayStr); setNotes(""); setInternalNotes("");
+    setError(null); setTried(false); setOpen(true);
   };
 
-  const save = async () => {
-    if (!customerId) return setError("Choose a customer.");
+  // Create the invoice, optionally marking it sent. Blocked politely if invalid.
+  const submit = async (send: boolean) => {
+    setTried(true);
+    if (hasBlocking) { setError(null); return; }
     setBusy(true);
     setError(null);
     try {
       const input: NewInvoice = {
         customer_id: customerId,
-        tax: Number(tax) || 0,
-        deposit_amount: Number(deposit) || 0,
+        vehicle_id: vehicleId || null,
+        tax: Math.round(taxAmount * 100) / 100,
+        deposit_amount: depositAmount,
         notes: notes || null,
-        lines,
+        internal_notes: internalNotes || null,
+        due_at: dueDate ? new Date(dueDate).toISOString() : null,
+        lines: validLines.map((l) => ({ description: l.description, quantity: Number(l.quantity) || 1, unit_price: Number(l.unit_price) || 0 })),
       };
-      await create(input);
+      const inv = await create(input);
+      if (send) { await markSent(inv.id); toast.success("Invoice created & sent"); }
+      else toast.success("Invoice created");
       setOpen(false);
-      toast.success("Invoice created");
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -217,6 +263,18 @@ export default function Invoices() {
 
   const setLine = (i: number, patch: Partial<LineRow>) =>
     setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+
+  const pickService = (i: number, serviceId: string) => {
+    const svc = services.find((s) => s.id === serviceId);
+    if (!svc) return setLine(i, { service_id: null });
+    setLine(i, { service_id: svc.id, description: svc.name, unit_price: svc.price });
+  };
+
+  const setDueDays = (days: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    setDueDate(d.toISOString().slice(0, 10));
+  };
 
   /** Duplicate: pull the original's real line items, then create a fresh invoice. */
   const duplicate = async (inv: Invoice) => {
@@ -465,76 +523,216 @@ export default function Invoices() {
         <InvoiceDocument invoice={pdf.inv} items={pdf.items} onDone={() => setPdf(null)} />
       )}
 
-      {/* New invoice — unchanged behaviour */}
+      {/* New invoice */}
       <Modal
         open={open}
         onClose={() => setOpen(false)}
+        size="xl"
+        icon={<ReceiptText />}
         title="New invoice"
+        subtitle="Record what was charged, paid, and still owed"
         footer={
           <>
             <Button onClick={() => setOpen(false)}>Cancel</Button>
-            <Button variant="primary" onClick={save} disabled={busy || !customerId}>
+            <Button onClick={() => submit(true)} disabled={busy} icon={busy ? <Loader2 className="animate-spin" /> : <Send />}>
+              {busy ? "Working…" : "Create & send"}
+            </Button>
+            <Button variant="primary" onClick={() => submit(false)} disabled={busy} icon={busy ? <Loader2 className="animate-spin" /> : undefined}>
               {busy ? "Saving…" : "Create invoice"}
             </Button>
           </>
         }
       >
-        <div className="flex flex-col gap-4">
-          <Field label="Customer">
-            <select className="input" value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-              <option value="">Select a customer…</option>
-              {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </Field>
+        <div className="flex flex-col gap-5">
+          {/* Customer + vehicle */}
+          <div className="flex flex-col gap-3">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FieldBlock label="Customer" required icon={<UserRound />} error={tried && problems.customer ? "Select a customer." : undefined}>
+                <Combobox
+                  ariaLabel="Customer"
+                  value={customerId}
+                  onChange={(id) => { setCustomerId(id); setVehicleId(""); }}
+                  options={customers.map((c) => ({ value: c.id, label: c.name, keywords: `${c.phone ?? ""} ${c.email ?? ""}` }))}
+                  searchable clearable
+                  placeholder="Select a customer…"
+                  searchPlaceholder="Search name or phone…"
+                  emptyLabel="No customers yet"
+                  leading={<UserRound className="h-4 w-4" />}
+                  invalid={tried && problems.customer}
+                  renderOption={(o) => {
+                    const c = customers.find((x) => x.id === o.value);
+                    return (
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13.5px] font-medium text-ink">{o.label}</span>
+                        {(c?.phone || c?.email) && <span className="block truncate text-[11.5px] text-ink3">{c?.phone || c?.email}</span>}
+                      </span>
+                    );
+                  }}
+                />
+              </FieldBlock>
+              <FieldBlock label="Vehicle" icon={<Car />} hint="Optional">
+                <Combobox
+                  ariaLabel="Vehicle"
+                  value={vehicleId}
+                  onChange={setVehicleId}
+                  options={vehicles.map((v) => ({ value: v.id, label: vehicleLabel(v), keywords: `${v.license_plate ?? ""} ${v.color ?? ""}` }))}
+                  clearable
+                  disabled={!customerId}
+                  placeholder={customerId ? "No vehicle" : "Select a customer first"}
+                  emptyLabel="No vehicles for this customer"
+                  leading={<Car className="h-4 w-4" />}
+                />
+              </FieldBlock>
+            </div>
 
+            {selectedCustomer && (
+              <div className="grid gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-2">
+                <div className="flex items-center gap-2.5 bg-panel2/50 px-3 py-2.5">
+                  <span className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-brand-500/10 text-[11px] font-bold text-brand-500">{initials(selectedCustomer.name)}</span>
+                  <div className="min-w-0">
+                    <div className="truncate text-[13px] font-semibold text-ink">{selectedCustomer.name}</div>
+                    {selectedCustomer.phone ? (
+                      <a href={`tel:${selectedCustomer.phone}`} className="flex items-center gap-1 truncate text-[11.5px] text-ink3 transition-colors hover:text-brand-500"><Phone className="h-3 w-3 flex-none" />{selectedCustomer.phone}</a>
+                    ) : selectedCustomer.email ? (
+                      <div className="flex items-center gap-1 truncate text-[11.5px] text-ink3"><Mail className="h-3 w-3 flex-none" />{selectedCustomer.email}</div>
+                    ) : (
+                      <div className="text-[11.5px] text-ink3">No contact info on file</div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2.5 bg-panel2/50 px-3 py-2.5">
+                  <span className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-panel2 text-ink3"><Car className="h-4 w-4" /></span>
+                  <div className="min-w-0">
+                    {selectedVehicle ? (
+                      <>
+                        <div className="truncate text-[13px] font-semibold text-ink">{vehicleLabel(selectedVehicle)}</div>
+                        {selectedVehicle.color && <div className="truncate text-[11.5px] text-ink3">{selectedVehicle.color}</div>}
+                      </>
+                    ) : (
+                      <div className="text-[12.5px] text-ink3">{vehicles.length > 0 ? `${vehicles.length} vehicle${vehicles.length === 1 ? "" : "s"} on file` : "No vehicle on file"}</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Line items */}
           <div>
-            <div className="mb-1.5 flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-[0.07em] text-ink2">Line items</span>
-              <button onClick={() => setLines((l) => [...l, blankLine()])} className="text-[12.5px] font-semibold text-brand-500">
-                + Add line
+            <div className="mb-2.5 flex items-center gap-2">
+              <ReceiptText className="h-4 w-4 text-brand-500" />
+              <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-ink2">Line items</span>
+              <button type="button" onClick={() => setLines((l) => [...l, blankLine()])}
+                className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-line bg-panel2/60 px-2.5 py-1.5 text-[12px] font-semibold text-ink2 transition-[transform,border-color,color,background-color] duration-150 hover:border-brand-500/50 hover:bg-brand-500/[0.06] hover:text-brand-500 active:scale-[0.97]">
+                <Plus className="h-3.5 w-3.5" /> Add line
               </button>
             </div>
-            <div className="flex flex-col gap-2">
-              {lines.map((l, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <input className="input flex-1" placeholder="Description (e.g. Full Detail)"
-                    value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} />
-                  <input className="input w-14 tnum" type="number" min={0} value={l.quantity}
-                    onChange={(e) => setLine(i, { quantity: Number(e.target.value) })} title="Qty" />
-                  <input className="input w-24 tnum" type="number" min={0} step="0.01" value={l.unit_price}
-                    onChange={(e) => setLine(i, { unit_price: Number(e.target.value) })} title="Unit price" />
-                  {lines.length > 1 && (
-                    <button onClick={() => setLines((ls) => ls.filter((_, idx) => idx !== i))}
-                      className="text-ink3 hover:text-danger" aria-label="Remove line">
-                      <X className="h-4 w-4" />
-                    </button>
-                  )}
+            <div className="mb-1.5 hidden grid-cols-[minmax(0,1fr)_52px_100px_88px_28px] gap-2 px-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-ink3 sm:grid">
+              <span>Item</span><span>Qty</span><span>Unit price</span><span className="text-right">Total</span><span />
+            </div>
+            <div className="flex flex-col gap-2.5">
+              {lines.map((l, i) => {
+                const lineTotal = (Number(l.quantity) || 0) * (Number(l.unit_price) || 0);
+                const qtyBad = l.description.trim() !== "" && (Number(l.quantity) || 0) <= 0;
+                const priceBad = Number(l.unit_price) < 0;
+                return (
+                  <div key={l.id} className="animate-fade-up rounded-xl bg-panel2/40 p-2.5 ring-1 ring-inset ring-line/70 sm:rounded-none sm:bg-transparent sm:p-0 sm:ring-0">
+                    <select className="input mb-2 h-9 text-[12.5px] font-medium sm:mb-1.5"
+                      value={l.service_id ?? ""}
+                      onChange={(e) => (e.target.value ? pickService(i, e.target.value) : setLine(i, { service_id: null }))}>
+                      <option value="">Custom line item — or select a service…</option>
+                      {services.map((s) => <option key={s.id} value={s.id}>{s.name} · {money(s.price)}</option>)}
+                    </select>
+                    <div className="grid grid-cols-[minmax(0,1fr)_52px_100px] items-center gap-2 sm:grid-cols-[minmax(0,1fr)_52px_100px_88px_28px]">
+                      <input className="input h-9" placeholder="Description" value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} />
+                      <input className={cn("input h-9 tnum", qtyBad && "border-danger/60")} type="number" min={1} value={l.quantity} onChange={(e) => setLine(i, { quantity: Number(e.target.value) })} />
+                      <input className={cn("input h-9 tnum", priceBad && "border-danger/60")} type="number" min={0} step="0.01" placeholder="0.00" value={l.unit_price} onChange={(e) => setLine(i, { unit_price: Number(e.target.value) })} />
+                      <span className="hidden text-right text-[14px] font-bold tnum text-ink sm:block">{money(lineTotal)}</span>
+                      <button className="hidden h-9 w-7 items-center justify-center rounded-lg text-ink3 transition-colors hover:text-danger disabled:opacity-30 sm:flex"
+                        disabled={lines.length === 1} onClick={() => setLines((ls) => ls.filter((_, idx) => idx !== i))} aria-label="Remove line">
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between sm:hidden">
+                      <span className="text-[12px] text-ink3">Line total <b className="text-[13px] tnum text-ink">{money(lineTotal)}</b></span>
+                      <button className="inline-flex items-center gap-1 text-[12px] font-medium text-ink3 transition-colors hover:text-danger disabled:opacity-30" disabled={lines.length === 1} onClick={() => setLines((ls) => ls.filter((_, idx) => idx !== i))}>
+                        <X className="h-3.5 w-3.5" /> Remove
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {tried && problems.lines && <p className="mt-2 text-[11.5px] text-danger">Add at least one line with a description and a quantity above 0.</p>}
+          </div>
+
+          {/* Payment — tax + deposit */}
+          <div>
+            <div className="mb-2.5 flex items-center gap-2">
+              <Wallet className="h-4 w-4 text-brand-500" />
+              <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-ink2">Payment</span>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FieldBlock label={`${taxLabel} rate (%)`} hint={defaultTaxRate != null ? "From settings" : undefined} error={problems.tax ? "Tax rate can't be negative." : undefined}>
+                <input className="input tnum" type="number" min={0} step="0.01" placeholder="0" value={taxRate} onChange={(e) => setTaxRate(e.target.value)} />
+                {taxAmount > 0 && <p className="mt-1 text-[11.5px] text-ink3">= {money(taxAmount)} {taxLabel.toLowerCase()}</p>}
+              </FieldBlock>
+              <FieldBlock label="Deposit paid" error={problems.deposit ? "Deposit can't be negative." : undefined}>
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[13px] text-ink3">$</span>
+                  <input className="input tnum pl-7" type="number" min={0} step="0.01" placeholder="0.00" value={deposit}
+                    onChange={(e) => setDeposit(e.target.value)}
+                    onBlur={() => { if (deposit.trim() !== "" && !Number.isNaN(Number(deposit))) setDeposit(Math.max(0, Number(deposit)).toFixed(2)); }} />
                 </div>
-              ))}
+                {depositAmount > 0 && <p className="mt-1 text-[11.5px] text-ink3">− {money(depositAmount)} toward the total</p>}
+              </FieldBlock>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <Field label="Tax ($)">
-              <input className="input tnum" type="number" min={0} step="0.01" value={tax}
-                onChange={(e) => setTax(e.target.value)} placeholder="0.00" />
-            </Field>
-            <Field label="Deposit paid ($)">
-              <input className="input tnum" type="number" min={0} step="0.01" value={deposit}
-                onChange={(e) => setDeposit(e.target.value)} placeholder="0.00" />
-            </Field>
+          {/* Payment due */}
+          <FieldBlock label="Payment due" icon={<CalendarClock />}>
+            <div className="flex flex-wrap items-center gap-2">
+              {([["Due on receipt", 0], ["7 days", 7], ["14 days", 14], ["30 days", 30]] as const).map(([label, d]) => {
+                const target = new Date(); target.setDate(target.getDate() + d);
+                const active = dueDate === target.toISOString().slice(0, 10);
+                return (
+                  <button key={label} type="button" onClick={() => (d === 0 ? setDueDate(todayStr) : setDueDays(d))}
+                    className={cn("h-10 rounded-lg border px-3.5 text-[12.5px] font-semibold transition-[transform,border-color,background-color,color] duration-150 active:scale-[0.97]",
+                      active ? "border-brand-500 bg-brand-500/[0.08] text-brand-500" : "border-line bg-panel2/50 text-ink2 hover:border-ink3/50")}>
+                    {label}
+                  </button>
+                );
+              })}
+              <input className="input h-10 w-auto min-w-[150px] flex-1" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+            </div>
+          </FieldBlock>
+
+          {/* Total summary — amount due is the hero */}
+          <div className="overflow-hidden rounded-xl border border-brand-500/20 bg-gradient-to-b from-brand-500/[0.06] to-brand-500/[0.015] shadow-[0_1px_2px_rgba(16,22,38,0.04),0_10px_26px_-16px_rgba(46,123,255,0.28)]">
+            <div className="flex flex-col gap-1.5 px-4 py-3.5 text-[13px]">
+              <div className="flex items-center justify-between"><span className="text-ink2">Subtotal</span><span className="tnum text-ink">{money(subtotal)}</span></div>
+              {taxAmount > 0 && <div className="flex items-center justify-between"><span className="text-ink2">{taxLabel}{taxRateNum ? ` (${taxRateNum}%)` : ""}</span><span className="tnum text-ink">{money(taxAmount)}</span></div>}
+              <div className="mt-1 flex items-center justify-between border-t border-line/70 pt-1.5"><span className="font-semibold text-ink">Total</span><span className="tnum font-semibold text-ink">{money(total)}</span></div>
+              {depositAmount > 0 && <div className="flex items-center justify-between"><span className="text-ink2">Deposit paid</span><span className="tnum text-success">− {money(depositAmount)}</span></div>}
+            </div>
+            <div className="flex items-end justify-between border-t border-brand-500/20 bg-brand-500/[0.04] px-4 py-3">
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink2">Amount due</span>
+                <PayPill paid={invoicePaid} partial={partiallyPaid} />
+              </div>
+              <span className="font-display text-[26px] font-bold leading-none tnum text-ink">{money(amountDue)}</span>
+            </div>
           </div>
 
-          <div className="rounded-lg bg-panel2 px-3.5 py-2.5 text-[13px]">
-            <div className="flex justify-between text-ink2"><span>Subtotal</span><span className="tnum">{money(subtotal)}</span></div>
-            <div className="mt-1 flex justify-between font-semibold"><span>Total</span><span className="tnum">{money(total)}</span></div>
-          </div>
+          {/* Notes */}
+          <FieldBlock label="Customer note" icon={<StickyNote />} hint="Shown on the invoice">
+            <textarea className="input" rows={2} placeholder="Payment instructions, thank-you message, or anything the customer should know…" value={notes} onChange={(e) => setNotes(e.target.value)} />
+          </FieldBlock>
+          <FieldBlock label="Internal note" icon={<Lock />} hint="Staff only · never shown to customer">
+            <textarea className="input" rows={2} placeholder="Private job or payment notes…" value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} />
+          </FieldBlock>
 
-          <Field label="Notes">
-            <textarea className="input" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)}
-              placeholder="Payment method (cash, Zelle, Venmo…) or job notes" />
-          </Field>
-          {error && <div className="text-[12.5px] text-danger">{error}</div>}
+          {error && <div className="rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
         </div>
       </Modal>
     </div>
@@ -936,9 +1134,20 @@ function InvoicePreview({ inv, getLineItems, onClose, onStatus, onSend, onPdf }:
 
         {inv.notes && (
           <div>
-            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-ink3">Notes</div>
+            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-ink3">Customer note</div>
             <p className="whitespace-pre-wrap rounded-xl bg-panel2/50 px-3.5 py-3 text-[12.5px] leading-relaxed text-ink2 ring-1 ring-inset ring-line/60">
               {inv.notes}
+            </p>
+          </div>
+        )}
+
+        {inv.internal_notes && (
+          <div>
+            <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-warning">
+              <Lock className="h-3 w-3" /> Internal note · not shown to the customer
+            </div>
+            <p className="whitespace-pre-wrap rounded-xl bg-warning/[0.07] px-3.5 py-3 text-[12.5px] leading-relaxed text-ink2 ring-1 ring-inset ring-warning/25">
+              {inv.internal_notes}
             </p>
           </div>
         )}
@@ -972,4 +1181,34 @@ function Row({ label, value, strong, tone }: {
       <span className={cn("tnum", tone === "success" && "text-success", tone === "danger" && "text-danger")}>{value}</span>
     </div>
   );
+}
+
+/** A div-based labelled field (safe to wrap a button-driven Combobox), with an
+ *  optional icon, required marker, right-aligned hint, and inline error. */
+function FieldBlock({ label, required, hint, error, icon, children }: {
+  label: string; required?: boolean; hint?: string; error?: string; icon?: React.ReactNode; children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink2">
+        {icon && <span className="text-ink3 [&>svg]:h-3.5 [&>svg]:w-3.5">{icon}</span>}
+        <span>{label}</span>
+        {required && <span className="text-danger" aria-hidden>*</span>}
+        {hint && <span className="ml-auto font-medium normal-case tracking-normal text-ink3">{hint}</span>}
+      </div>
+      {children}
+      {error && <p className="mt-1 text-[11.5px] text-danger">{error}</p>}
+    </div>
+  );
+}
+
+/** Up-to-two-letter initials for the selected-customer avatar chip. */
+const initials = (name: string) =>
+  name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("") || "?";
+
+/** Derived payment status shown beside "Amount due" in the composer. */
+function PayPill({ paid, partial }: { paid: boolean; partial: boolean }) {
+  if (paid) return <span className="rounded-full bg-success/12 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-success ring-1 ring-inset ring-success/25">Paid</span>;
+  if (partial) return <span className="rounded-full bg-violet/12 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet ring-1 ring-inset ring-violet/25">Partially paid</span>;
+  return null;
 }

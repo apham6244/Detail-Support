@@ -6,11 +6,21 @@ import { isDemo, demoGuard, DEMO_INVOICES } from "@/lib/demo";
 
 export type NewInvoice = {
   customer_id: string;
+  vehicle_id?: string | null;
   deposit_amount?: number;
   tax?: number;
   notes?: string | null;
+  internal_notes?: string | null;
+  due_at?: string | null;
   lines: Omit<InvoiceLineItem, "id" | "amount">[];
 };
+
+/**
+ * `vehicle_id` / `internal_notes` ship in migration 029. We write them
+ * best-effort in a follow-up call and swallow a "column does not exist" error,
+ * so invoice creation keeps working before 029 is applied.
+ */
+const isMissingInvoiceExtra = (msg: string) => /vehicle_id|internal_notes/i.test(msg);
 
 const mapInvoice = (i: any): Invoice => ({
   ...i,
@@ -67,9 +77,11 @@ export function useInvoices() {
       .select("id", { count: "exact", head: true });
     const number = `INV-${String((count ?? 0) + 1).padStart(4, "0")}`;
 
-    const status: InvoiceStatus = deposit > 0 ? "deposit_paid" : "unpaid";
+    // Payment status follows the money: fully covered → paid, part paid →
+    // deposit_paid, nothing yet → unpaid. (No manual status needed.)
+    const status: InvoiceStatus = total > 0 && deposit >= total ? "paid" : deposit > 0 ? "deposit_paid" : "unpaid";
 
-    const { data: inv, error } = await supabase
+    let { data: inv, error } = await supabase
       .from("invoices")
       .insert({
         org_id: org.id,
@@ -81,6 +93,7 @@ export function useInvoices() {
         total,
         deposit_amount: deposit,
         notes: input.notes ?? null,
+        due_at: input.due_at ?? null,
       })
       .select("*, customer:customers(name)")
       .single();
@@ -91,6 +104,16 @@ export function useInvoices() {
         lines.map((l) => ({ org_id: org.id, invoice_id: inv.id, ...l }))
       );
       if (liErr) throw new Error(liErr.message);
+    }
+
+    // Best-effort: persist vehicle_id + internal_notes (migration 029).
+    const extra: Record<string, unknown> = {};
+    if (input.vehicle_id) extra.vehicle_id = input.vehicle_id;
+    if (input.internal_notes != null && input.internal_notes !== "") extra.internal_notes = input.internal_notes;
+    if (Object.keys(extra).length) {
+      const res = await supabase.from("invoices").update(extra).eq("id", inv.id).select("*, customer:customers(name)").single();
+      if (!res.error) inv = res.data;
+      else if (!isMissingInvoiceExtra(res.error.message)) throw new Error(res.error.message);
     }
 
     const mapped = mapInvoice(inv);
