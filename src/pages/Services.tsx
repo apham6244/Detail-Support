@@ -86,6 +86,13 @@ function categoryMeta(raw: string | null) {
 
 const BLANK: ServiceInput = { name: "", price: 0, duration_min: 60, category: "", description: "", active: true };
 
+/** One-question-at-a-time wizard steps for the add/edit form. */
+const SERVICE_STEPS = ["Name", "Pricing", "Details", "Review"] as const;
+const stepSlide = {
+  enter: (d: number) => ({ opacity: 0, x: d >= 0 ? 32 : -32 }),
+  center: { opacity: 1, x: 0 },
+};
+
 const durationLabel = (min: number) => {
   if (!min) return "—";
   if (min < 60) return `${min} min`;
@@ -105,6 +112,8 @@ export default function Services() {
   const [form, setForm] = useState<ServiceInput>(BLANK);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [step, setStep] = useState(0);
+  const [dir, setDir] = useState(1);
 
   const [query, setQuery] = useState("");
   const [catFilter, setCatFilter] = useState<string>("all");
@@ -187,7 +196,7 @@ export default function Services() {
     return [...set.entries()].sort((a, b) => b[1] - a[1]);
   }, [services, showArchived]);
 
-  const openNew = () => { setEditing(null); setForm(BLANK); setError(null); setOpen(true); };
+  const openNew = () => { setEditing(null); setForm(BLANK); setError(null); setStep(0); setDir(1); setOpen(true); };
   const openEdit = (s: Service) => {
     setEditing(s);
     setForm({
@@ -195,6 +204,8 @@ export default function Services() {
       category: s.category ?? "", description: s.description ?? "", active: s.active !== false,
     });
     setError(null);
+    setStep(0);
+    setDir(1);
     setOpen(true);
   };
 
@@ -212,6 +223,14 @@ export default function Services() {
       setBusy(false);
     }
   };
+
+  // Per-step validity — each step is validated on its own, not the whole form.
+  const nameValid = form.name.trim().length > 0;
+  const pricingValid = Number(form.price) >= 0 && Number(form.duration_min) > 0;
+  const stepValid = [nameValid, pricingValid, true, nameValid];
+  const goStep = (n: number, d: number) => { setDir(d); setStep(Math.max(0, Math.min(SERVICE_STEPS.length - 1, n))); };
+  const nextStep = () => { if (stepValid[step]) goStep(step + 1, 1); };
+  const prevStep = () => goStep(step - 1, -1);
 
   const duplicate = async (s: Service) => {
     await create({
@@ -350,83 +369,119 @@ export default function Services() {
         </>
       )}
 
-      {/* Add / edit */}
+      {/* Add / edit — a one-question-at-a-time wizard (same flow as elsewhere) */}
       <Modal
         open={open}
         onClose={() => setOpen(false)}
         title={editing ? "Edit service" : "Add service"}
         footer={
           <>
-            <Button onClick={() => setOpen(false)}>Cancel</Button>
-            <Button variant="primary" onClick={save} disabled={busy || !form.name.trim()}>
-              {busy ? "Saving…" : editing ? "Save changes" : "Add service"}
-            </Button>
+            {step === 0
+              ? <Button onClick={() => setOpen(false)}>Cancel</Button>
+              : <Button onClick={prevStep} disabled={busy}>Back</Button>}
+            {step < SERVICE_STEPS.length - 1
+              ? <Button variant="primary" onClick={nextStep} disabled={!stepValid[step]}>Continue</Button>
+              : <Button variant="primary" onClick={save} disabled={busy || !nameValid}>
+                  {busy ? "Saving…" : editing ? "Save changes" : "Add service"}
+                </Button>}
           </>
         }
       >
         <div className="flex flex-col gap-4">
-          <Field label="Service name">
-            <input className="input" value={form.name} autoFocus
-              onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Full Detail" />
-          </Field>
-
-          <div className="grid grid-cols-2 gap-4">
-            <Field label="Price ($)">
-              <input className="input tnum" type="number" min={0} step="0.01" value={form.price ?? 0}
-                onChange={(e) => setForm({ ...form, price: Number(e.target.value) })} />
-            </Field>
-            <Field label="Duration (min)">
-              <input className="input tnum" type="number" min={0} step="5" value={form.duration_min ?? 60}
-                onChange={(e) => setForm({ ...form, duration_min: Number(e.target.value) })} />
-            </Field>
+          {/* Progress — ● ━ ● ━ ○ ━ ○ + "Step N of 4" */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              {SERVICE_STEPS.map((_, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  <span className={cn("h-2 w-2 flex-none rounded-full transition-colors", i <= step ? "bg-brand-500" : "bg-line2")} />
+                  {i < SERVICE_STEPS.length - 1 && <span className={cn("h-px w-4 flex-none transition-colors", i < step ? "bg-brand-500/50" : "bg-line")} />}
+                </div>
+              ))}
+            </div>
+            <span className="text-[11.5px] font-semibold text-ink3">Step {step + 1} of {SERVICE_STEPS.length}</span>
           </div>
 
-          <Field label="Category">
-            <input className="input" value={form.category ?? ""}
-              onChange={(e) => setForm({ ...form, category: e.target.value })}
-              placeholder="Interior · Exterior · Protection" />
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {SUGGESTED.map((c) => {
-                const on = (form.category ?? "").trim().toLowerCase() === c.toLowerCase();
-                return (
-                  <button key={c} type="button" onClick={() => setForm({ ...form, category: c })}
-                    className={cn(
-                      "rounded-full px-2.5 py-1 text-[11.5px] font-semibold ring-1 ring-inset transition",
-                      on ? "bg-brand-500/12 text-brand-500 ring-brand-500/30" : "text-ink3 ring-line hover:bg-line2 hover:text-ink"
-                    )}>
-                    {c}
-                  </button>
-                );
-              })}
-            </div>
-          </Field>
+          {/* Sliding step content — min-height keeps the modal from jumping */}
+          <div className="min-h-[188px]">
+            <motion.div key={step} custom={dir} variants={stepSlide} initial="enter" animate="center"
+              transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }} className="flex flex-col gap-4">
 
-          <Field label="Description">
-            <textarea className="input" rows={3} value={form.description ?? ""}
-              onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="What's included" />
-          </Field>
+              {step === 0 && (
+                <Field label="Service name">
+                  <input className="input" value={form.name} autoFocus
+                    onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Full Detail" />
+                </Field>
+              )}
 
-          {/* Live preview — how the card will read on the menu */}
-          <div className="rounded-xl bg-panel2/50 px-3.5 py-3 ring-1 ring-inset ring-line/60">
-            <div className="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-ink3">Preview</div>
-            <div className="mt-1.5 flex items-baseline justify-between gap-3">
-              <span className="truncate font-display text-[15px] font-bold text-ink">{form.name.trim() || "Service name"}</span>
-              <span className="font-display text-[17px] font-bold tnum text-ink">{money(Number(form.price) || 0)}</span>
-            </div>
-            <div className="mt-1 flex items-center gap-1.5 text-[11.5px] text-ink3">
-              <Clock className="h-3 w-3" /> {durationLabel(Number(form.duration_min) || 0)}
-              {form.category?.trim() && <><span className="text-line2">·</span>{form.category.trim()}</>}
-            </div>
+              {step === 1 && (
+                <div className="grid grid-cols-2 gap-4">
+                  <Field label="Price ($)">
+                    <input className="input tnum" type="number" min={0} step="0.01" value={form.price ?? 0} autoFocus
+                      onChange={(e) => setForm({ ...form, price: Number(e.target.value) })} />
+                  </Field>
+                  <Field label="Duration (min)">
+                    <input className="input tnum" type="number" min={0} step="5" value={form.duration_min ?? 60}
+                      onChange={(e) => setForm({ ...form, duration_min: Number(e.target.value) })} />
+                  </Field>
+                </div>
+              )}
+
+              {step === 2 && (
+                <>
+                  <Field label="Category">
+                    <input className="input" value={form.category ?? ""} autoFocus
+                      onChange={(e) => setForm({ ...form, category: e.target.value })}
+                      placeholder="Interior · Exterior · Protection" />
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {SUGGESTED.map((c) => {
+                        const on = (form.category ?? "").trim().toLowerCase() === c.toLowerCase();
+                        return (
+                          <button key={c} type="button" onClick={() => setForm({ ...form, category: c })}
+                            className={cn(
+                              "rounded-full px-2.5 py-1 text-[11.5px] font-semibold ring-1 ring-inset transition",
+                              on ? "bg-brand-500/12 text-brand-500 ring-brand-500/30" : "text-ink3 ring-line hover:bg-line2 hover:text-ink"
+                            )}>
+                            {c}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </Field>
+
+                  <Field label="Description">
+                    <textarea className="input" rows={3} value={form.description ?? ""}
+                      onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="What's included" />
+                  </Field>
+                </>
+              )}
+
+              {step === 3 && (
+                <>
+                  {/* Live preview — how the card will read on the menu */}
+                  <div className="rounded-xl bg-panel2/50 px-3.5 py-3 ring-1 ring-inset ring-line/60">
+                    <div className="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-ink3">Preview</div>
+                    <div className="mt-1.5 flex items-baseline justify-between gap-3">
+                      <span className="truncate font-display text-[15px] font-bold text-ink">{form.name.trim() || "Service name"}</span>
+                      <span className="font-display text-[17px] font-bold tnum text-ink">{money(Number(form.price) || 0)}</span>
+                    </div>
+                    <div className="mt-1 flex items-center gap-1.5 text-[11.5px] text-ink3">
+                      <Clock className="h-3 w-3" /> {durationLabel(Number(form.duration_min) || 0)}
+                      {form.category?.trim() && <><span className="text-line2">·</span>{form.category.trim()}</>}
+                    </div>
+                  </div>
+
+                  <label className="flex cursor-pointer items-center gap-2.5">
+                    <input type="checkbox" checked={form.active !== false}
+                      onChange={(e) => setForm({ ...form, active: e.target.checked })}
+                      className="h-4 w-4 accent-[#2E7BFF]" />
+                    <span className="text-[13px] text-ink2">
+                      Active — show on the menu and when booking
+                    </span>
+                  </label>
+                </>
+              )}
+            </motion.div>
           </div>
-
-          <label className="flex cursor-pointer items-center gap-2.5">
-            <input type="checkbox" checked={form.active !== false}
-              onChange={(e) => setForm({ ...form, active: e.target.checked })}
-              className="h-4 w-4 accent-[#2E7BFF]" />
-            <span className="text-[13px] text-ink2">
-              Active — show on the menu and when booking
-            </span>
-          </label>
 
           {error && <div className="rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
         </div>
