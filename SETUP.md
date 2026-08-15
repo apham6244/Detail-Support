@@ -53,6 +53,32 @@ Each should report success. (Run them one at a time.)
 > without them, quote/invoice internal notes and the invoice's vehicle field
 > simply no-op (the app is written to degrade gracefully until they're applied).
 
+### Prefer a script? (`npm run db:migrate`)
+
+Instead of pasting each file by hand, you can apply migrations with the built-in
+runner. It tracks what's been applied in a `schema_migrations` table and runs
+only what's pending, each in its own transaction.
+
+1. Add a direct Postgres connection string to `server/.env` as `DATABASE_URL`
+   (Supabase → **Settings → Database → Connection string → URI**; pick **Direct
+   connection** or **Session pooler**, not Transaction pooler). See `.env.example`.
+2. From `server/`:
+
+   ```bash
+   npm run db:migrate:status     # see what's applied vs pending
+   npm run db:migrate            # apply everything pending, in order
+   ```
+
+If your database was set up **by hand** before adopting the runner, first record
+what you've already run so it isn't executed again (this only writes tracking
+rows — it does not run those files), then migrate the rest:
+
+```bash
+# mark schema.sql … 027 as already applied, then apply 028, 029, …
+node scripts/migrate.mjs --baseline 027_customer_referral.sql
+npm run db:migrate
+```
+
 ## 3. Get your API keys
 
 **Project Settings → API.** Copy three values:
