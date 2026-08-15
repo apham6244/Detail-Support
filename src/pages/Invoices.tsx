@@ -1,4 +1,5 @@
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { ResponsiveContainer, AreaChart, Area } from "recharts";
 import {
@@ -6,6 +7,7 @@ import {
   Download, MoreHorizontal, Eye, CheckCircle2, Copy, AlertCircle, TrendingUp,
   TrendingDown, Receipt, Wallet, CalendarDays, MailCheck, Printer, Loader2,
   UserRound, Car, ReceiptText, CalendarClock, StickyNote, Lock, Mail, Phone,
+  Check, ArrowLeft, ArrowRight, Pencil,
   type LucideIcon,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -24,7 +26,7 @@ import { useVehicles } from "@/hooks/useVehicles";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { useEntitlements } from "@/lib/entitlements";
 import { FeatureLocked } from "@/components/UpgradeGate";
-import { INVOICE_STATUS_LABEL, vehicleLabel, type Invoice, type InvoiceLineItem, type InvoiceStatus } from "@/lib/models";
+import { INVOICE_STATUS_LABEL, vehicleLabel, type Customer, type Invoice, type InvoiceLineItem, type InvoiceStatus } from "@/lib/models";
 import { cn } from "@/lib/cn";
 
 const STATUSES: InvoiceStatus[] = ["unpaid", "deposit_paid", "balance_due", "paid"];
@@ -91,13 +93,9 @@ const RANGES: { key: RangeKey; label: string }[] = [
 export default function Invoices() {
   const { invoices, loading, ready, create, setStatus, markSent, remove, getLineItems } = useInvoices();
   const { customers } = useCustomers();
-  const { services } = useServices();
-  const { ws } = useWorkspace();
   const ent = useEntitlements();
 
   const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<Invoice | null>(null);
   /** Invoice queued for print-to-PDF, with its line items already resolved. */
   const [pdf, setPdf] = useState<{ inv: Invoice; items: InvoiceLineItem[] } | null>(null);
@@ -109,50 +107,6 @@ export default function Invoices() {
   const [customerFilter, setCustomerFilter] = useState("all");
   const [range, setRange] = useState<RangeKey>("all");
   const [sort, setSort] = useState<SortKey>("newest");
-
-  // new-invoice form
-  const [customerId, setCustomerId] = useState("");
-  const [vehicleId, setVehicleId] = useState("");
-  const [lines, setLines] = useState<LineRow[]>([blankLine()]);
-  const [taxRate, setTaxRate] = useState("");
-  const [deposit, setDeposit] = useState("");
-  const [dueDate, setDueDate] = useState("");
-  const [notes, setNotes] = useState("");
-  const [internalNotes, setInternalNotes] = useState("");
-  const [tried, setTried] = useState(false);
-
-  const { vehicles } = useVehicles(customerId || null);
-
-  const taxLabel = (ws?.settings?.tax_label || "Sales tax").trim() || "Sales tax";
-  const defaultTaxRate = ws?.settings?.tax_enabled ? ws?.settings?.tax_rate ?? null : null;
-  const num = (s: string) => { const n = Number(s); return Number.isFinite(n) ? n : 0; };
-  const todayStr = new Date().toISOString().slice(0, 10);
-
-  const subtotal = useMemo(
-    () => lines.reduce((s, l) => s + (Number(l.quantity) || 0) * (Number(l.unit_price) || 0), 0),
-    [lines]
-  );
-  const taxRateNum = Math.max(0, num(taxRate));
-  const taxAmount = (subtotal * taxRateNum) / 100;
-  const total = subtotal + taxAmount;
-  const depositAmount = Math.max(0, num(deposit));
-  const amountDue = Math.max(0, total - depositAmount);
-  const invoicePaid = total > 0 && depositAmount >= total;
-  const partiallyPaid = depositAmount > 0 && !invoicePaid;
-
-  const validLines = lines.filter((l) => l.description.trim() && (Number(l.quantity) || 0) > 0);
-  const problems = {
-    customer: !customerId,
-    lines: validLines.length === 0,
-    qty: lines.some((l) => l.description.trim() && (Number(l.quantity) || 0) <= 0),
-    price: lines.some((l) => Number(l.unit_price) < 0),
-    tax: taxRateNum < 0,
-    deposit: num(deposit) < 0,
-  };
-  const hasBlocking = Object.values(problems).some(Boolean);
-
-  const selectedCustomer = customers.find((c) => c.id === customerId) ?? null;
-  const selectedVehicle = vehicles.find((v) => v.id === vehicleId) ?? null;
 
   const months = useMemo(() => lastMonths(6), []);
 
@@ -226,55 +180,7 @@ export default function Invoices() {
     return m;
   }, [invoices]);
 
-  const openNew = () => {
-    setCustomerId(""); setVehicleId(""); setLines([blankLine()]);
-    setTaxRate(defaultTaxRate != null ? String(defaultTaxRate) : "");
-    setDeposit(""); setDueDate(todayStr); setNotes(""); setInternalNotes("");
-    setError(null); setTried(false); setOpen(true);
-  };
-
-  // Create the invoice, optionally marking it sent. Blocked politely if invalid.
-  const submit = async (send: boolean) => {
-    setTried(true);
-    if (hasBlocking) { setError(null); return; }
-    setBusy(true);
-    setError(null);
-    try {
-      const input: NewInvoice = {
-        customer_id: customerId,
-        vehicle_id: vehicleId || null,
-        tax: Math.round(taxAmount * 100) / 100,
-        deposit_amount: depositAmount,
-        notes: notes || null,
-        internal_notes: internalNotes || null,
-        due_at: dueDate ? new Date(dueDate).toISOString() : null,
-        lines: validLines.map((l) => ({ description: l.description, quantity: Number(l.quantity) || 1, unit_price: Number(l.unit_price) || 0 })),
-      };
-      const inv = await create(input);
-      if (send) { await markSent(inv.id); toast.success("Invoice created & sent"); }
-      else toast.success("Invoice created");
-      setOpen(false);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const setLine = (i: number, patch: Partial<LineRow>) =>
-    setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
-
-  const pickService = (i: number, serviceId: string) => {
-    const svc = services.find((s) => s.id === serviceId);
-    if (!svc) return setLine(i, { service_id: null });
-    setLine(i, { service_id: svc.id, description: svc.name, unit_price: svc.price });
-  };
-
-  const setDueDays = (days: number) => {
-    const d = new Date();
-    d.setDate(d.getDate() + days);
-    setDueDate(d.toISOString().slice(0, 10));
-  };
+  const openNew = () => setOpen(true);
 
   /** Duplicate: pull the original's real line items, then create a fresh invoice. */
   const duplicate = async (inv: Invoice) => {
@@ -523,218 +429,15 @@ export default function Invoices() {
         <InvoiceDocument invoice={pdf.inv} items={pdf.items} onDone={() => setPdf(null)} />
       )}
 
-      {/* New invoice */}
-      <Modal
+      {/* New invoice — guided wizard */}
+      <NewInvoiceWizard
         open={open}
         onClose={() => setOpen(false)}
-        size="xl"
-        icon={<ReceiptText />}
-        title="New invoice"
-        subtitle="Record what was charged, paid, and still owed"
-        footer={
-          <>
-            <Button onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={() => submit(true)} disabled={busy} icon={busy ? <Loader2 className="animate-spin" /> : <Send />}>
-              {busy ? "Working…" : "Create & send"}
-            </Button>
-            <Button variant="primary" onClick={() => submit(false)} disabled={busy} icon={busy ? <Loader2 className="animate-spin" /> : undefined}>
-              {busy ? "Saving…" : "Create invoice"}
-            </Button>
-          </>
-        }
-      >
-        <div className="flex flex-col gap-5">
-          {/* Customer + vehicle */}
-          <div className="flex flex-col gap-3">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <FieldBlock label="Customer" required icon={<UserRound />} error={tried && problems.customer ? "Select a customer." : undefined}>
-                <Combobox
-                  ariaLabel="Customer"
-                  value={customerId}
-                  onChange={(id) => { setCustomerId(id); setVehicleId(""); }}
-                  options={customers.map((c) => ({ value: c.id, label: c.name, keywords: `${c.phone ?? ""} ${c.email ?? ""}` }))}
-                  searchable clearable
-                  placeholder="Select a customer…"
-                  searchPlaceholder="Search name or phone…"
-                  emptyLabel="No customers yet"
-                  leading={<UserRound className="h-4 w-4" />}
-                  invalid={tried && problems.customer}
-                  renderOption={(o) => {
-                    const c = customers.find((x) => x.id === o.value);
-                    return (
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[13.5px] font-medium text-ink">{o.label}</span>
-                        {(c?.phone || c?.email) && <span className="block truncate text-[11.5px] text-ink3">{c?.phone || c?.email}</span>}
-                      </span>
-                    );
-                  }}
-                />
-              </FieldBlock>
-              <FieldBlock label="Vehicle" icon={<Car />} hint="Optional">
-                <Combobox
-                  ariaLabel="Vehicle"
-                  value={vehicleId}
-                  onChange={setVehicleId}
-                  options={vehicles.map((v) => ({ value: v.id, label: vehicleLabel(v), keywords: `${v.license_plate ?? ""} ${v.color ?? ""}` }))}
-                  clearable
-                  disabled={!customerId}
-                  placeholder={customerId ? "No vehicle" : "Select a customer first"}
-                  emptyLabel="No vehicles for this customer"
-                  leading={<Car className="h-4 w-4" />}
-                />
-              </FieldBlock>
-            </div>
+        customers={customers}
+        create={create}
+        markSent={markSent}
+      />
 
-            {selectedCustomer && (
-              <div className="grid gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-2">
-                <div className="flex items-center gap-2.5 bg-panel2/50 px-3 py-2.5">
-                  <span className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-brand-500/10 text-[11px] font-bold text-brand-500">{initials(selectedCustomer.name)}</span>
-                  <div className="min-w-0">
-                    <div className="truncate text-[13px] font-semibold text-ink">{selectedCustomer.name}</div>
-                    {selectedCustomer.phone ? (
-                      <a href={`tel:${selectedCustomer.phone}`} className="flex items-center gap-1 truncate text-[11.5px] text-ink3 transition-colors hover:text-brand-500"><Phone className="h-3 w-3 flex-none" />{selectedCustomer.phone}</a>
-                    ) : selectedCustomer.email ? (
-                      <div className="flex items-center gap-1 truncate text-[11.5px] text-ink3"><Mail className="h-3 w-3 flex-none" />{selectedCustomer.email}</div>
-                    ) : (
-                      <div className="text-[11.5px] text-ink3">No contact info on file</div>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2.5 bg-panel2/50 px-3 py-2.5">
-                  <span className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-panel2 text-ink3"><Car className="h-4 w-4" /></span>
-                  <div className="min-w-0">
-                    {selectedVehicle ? (
-                      <>
-                        <div className="truncate text-[13px] font-semibold text-ink">{vehicleLabel(selectedVehicle)}</div>
-                        {selectedVehicle.color && <div className="truncate text-[11.5px] text-ink3">{selectedVehicle.color}</div>}
-                      </>
-                    ) : (
-                      <div className="text-[12.5px] text-ink3">{vehicles.length > 0 ? `${vehicles.length} vehicle${vehicles.length === 1 ? "" : "s"} on file` : "No vehicle on file"}</div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Line items */}
-          <div>
-            <div className="mb-2.5 flex items-center gap-2">
-              <ReceiptText className="h-4 w-4 text-brand-500" />
-              <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-ink2">Line items</span>
-              <button type="button" onClick={() => setLines((l) => [...l, blankLine()])}
-                className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-line bg-panel2/60 px-2.5 py-1.5 text-[12px] font-semibold text-ink2 transition-[transform,border-color,color,background-color] duration-150 hover:border-brand-500/50 hover:bg-brand-500/[0.06] hover:text-brand-500 active:scale-[0.97]">
-                <Plus className="h-3.5 w-3.5" /> Add line
-              </button>
-            </div>
-            <div className="mb-1.5 hidden grid-cols-[minmax(0,1fr)_52px_100px_88px_28px] gap-2 px-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-ink3 sm:grid">
-              <span>Item</span><span>Qty</span><span>Unit price</span><span className="text-right">Total</span><span />
-            </div>
-            <div className="flex flex-col gap-2.5">
-              {lines.map((l, i) => {
-                const lineTotal = (Number(l.quantity) || 0) * (Number(l.unit_price) || 0);
-                const qtyBad = l.description.trim() !== "" && (Number(l.quantity) || 0) <= 0;
-                const priceBad = Number(l.unit_price) < 0;
-                return (
-                  <div key={l.id} className="animate-fade-up rounded-xl bg-panel2/40 p-2.5 ring-1 ring-inset ring-line/70 sm:rounded-none sm:bg-transparent sm:p-0 sm:ring-0">
-                    <select className="input mb-2 h-9 text-[12.5px] font-medium sm:mb-1.5"
-                      value={l.service_id ?? ""}
-                      onChange={(e) => (e.target.value ? pickService(i, e.target.value) : setLine(i, { service_id: null }))}>
-                      <option value="">Custom line item — or select a service…</option>
-                      {services.map((s) => <option key={s.id} value={s.id}>{s.name} · {money(s.price)}</option>)}
-                    </select>
-                    <div className="grid grid-cols-[minmax(0,1fr)_52px_100px] items-center gap-2 sm:grid-cols-[minmax(0,1fr)_52px_100px_88px_28px]">
-                      <input className="input h-9" placeholder="Description" value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} />
-                      <input className={cn("input h-9 tnum", qtyBad && "border-danger/60")} type="number" min={1} value={l.quantity} onChange={(e) => setLine(i, { quantity: Number(e.target.value) })} />
-                      <input className={cn("input h-9 tnum", priceBad && "border-danger/60")} type="number" min={0} step="0.01" placeholder="0.00" value={l.unit_price} onChange={(e) => setLine(i, { unit_price: Number(e.target.value) })} />
-                      <span className="hidden text-right text-[14px] font-bold tnum text-ink sm:block">{money(lineTotal)}</span>
-                      <button className="hidden h-9 w-7 items-center justify-center rounded-lg text-ink3 transition-colors hover:text-danger disabled:opacity-30 sm:flex"
-                        disabled={lines.length === 1} onClick={() => setLines((ls) => ls.filter((_, idx) => idx !== i))} aria-label="Remove line">
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                    <div className="mt-2 flex items-center justify-between sm:hidden">
-                      <span className="text-[12px] text-ink3">Line total <b className="text-[13px] tnum text-ink">{money(lineTotal)}</b></span>
-                      <button className="inline-flex items-center gap-1 text-[12px] font-medium text-ink3 transition-colors hover:text-danger disabled:opacity-30" disabled={lines.length === 1} onClick={() => setLines((ls) => ls.filter((_, idx) => idx !== i))}>
-                        <X className="h-3.5 w-3.5" /> Remove
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            {tried && problems.lines && <p className="mt-2 text-[11.5px] text-danger">Add at least one line with a description and a quantity above 0.</p>}
-          </div>
-
-          {/* Payment — tax + deposit */}
-          <div>
-            <div className="mb-2.5 flex items-center gap-2">
-              <Wallet className="h-4 w-4 text-brand-500" />
-              <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-ink2">Payment</span>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <FieldBlock label={`${taxLabel} rate (%)`} hint={defaultTaxRate != null ? "From settings" : undefined} error={problems.tax ? "Tax rate can't be negative." : undefined}>
-                <input className="input tnum" type="number" min={0} step="0.01" placeholder="0" value={taxRate} onChange={(e) => setTaxRate(e.target.value)} />
-                {taxAmount > 0 && <p className="mt-1 text-[11.5px] text-ink3">= {money(taxAmount)} {taxLabel.toLowerCase()}</p>}
-              </FieldBlock>
-              <FieldBlock label="Deposit paid" error={problems.deposit ? "Deposit can't be negative." : undefined}>
-                <div className="relative">
-                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[13px] text-ink3">$</span>
-                  <input className="input tnum pl-7" type="number" min={0} step="0.01" placeholder="0.00" value={deposit}
-                    onChange={(e) => setDeposit(e.target.value)}
-                    onBlur={() => { if (deposit.trim() !== "" && !Number.isNaN(Number(deposit))) setDeposit(Math.max(0, Number(deposit)).toFixed(2)); }} />
-                </div>
-                {depositAmount > 0 && <p className="mt-1 text-[11.5px] text-ink3">− {money(depositAmount)} toward the total</p>}
-              </FieldBlock>
-            </div>
-          </div>
-
-          {/* Payment due */}
-          <FieldBlock label="Payment due" icon={<CalendarClock />}>
-            <div className="flex flex-wrap items-center gap-2">
-              {([["Due on receipt", 0], ["7 days", 7], ["14 days", 14], ["30 days", 30]] as const).map(([label, d]) => {
-                const target = new Date(); target.setDate(target.getDate() + d);
-                const active = dueDate === target.toISOString().slice(0, 10);
-                return (
-                  <button key={label} type="button" onClick={() => (d === 0 ? setDueDate(todayStr) : setDueDays(d))}
-                    className={cn("h-10 rounded-lg border px-3.5 text-[12.5px] font-semibold transition-[transform,border-color,background-color,color] duration-150 active:scale-[0.97]",
-                      active ? "border-brand-500 bg-brand-500/[0.08] text-brand-500" : "border-line bg-panel2/50 text-ink2 hover:border-ink3/50")}>
-                    {label}
-                  </button>
-                );
-              })}
-              <input className="input h-10 w-auto min-w-[150px] flex-1" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-            </div>
-          </FieldBlock>
-
-          {/* Total summary — amount due is the hero */}
-          <div className="overflow-hidden rounded-xl border border-brand-500/20 bg-gradient-to-b from-brand-500/[0.06] to-brand-500/[0.015] shadow-[0_1px_2px_rgba(16,22,38,0.04),0_10px_26px_-16px_rgba(46,123,255,0.28)]">
-            <div className="flex flex-col gap-1.5 px-4 py-3.5 text-[13px]">
-              <div className="flex items-center justify-between"><span className="text-ink2">Subtotal</span><span className="tnum text-ink">{money(subtotal)}</span></div>
-              {taxAmount > 0 && <div className="flex items-center justify-between"><span className="text-ink2">{taxLabel}{taxRateNum ? ` (${taxRateNum}%)` : ""}</span><span className="tnum text-ink">{money(taxAmount)}</span></div>}
-              <div className="mt-1 flex items-center justify-between border-t border-line/70 pt-1.5"><span className="font-semibold text-ink">Total</span><span className="tnum font-semibold text-ink">{money(total)}</span></div>
-              {depositAmount > 0 && <div className="flex items-center justify-between"><span className="text-ink2">Deposit paid</span><span className="tnum text-success">− {money(depositAmount)}</span></div>}
-            </div>
-            <div className="flex items-end justify-between border-t border-brand-500/20 bg-brand-500/[0.04] px-4 py-3">
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink2">Amount due</span>
-                <PayPill paid={invoicePaid} partial={partiallyPaid} />
-              </div>
-              <span className="font-display text-[26px] font-bold leading-none tnum text-ink">{money(amountDue)}</span>
-            </div>
-          </div>
-
-          {/* Notes */}
-          <FieldBlock label="Customer note" icon={<StickyNote />} hint="Shown on the invoice">
-            <textarea className="input" rows={2} placeholder="Payment instructions, thank-you message, or anything the customer should know…" value={notes} onChange={(e) => setNotes(e.target.value)} />
-          </FieldBlock>
-          <FieldBlock label="Internal note" icon={<Lock />} hint="Staff only · never shown to customer">
-            <textarea className="input" rows={2} placeholder="Private job or payment notes…" value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} />
-          </FieldBlock>
-
-          {error && <div className="rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
-        </div>
-      </Modal>
     </div>
   );
 }
@@ -1211,4 +914,445 @@ function PayPill({ paid, partial }: { paid: boolean; partial: boolean }) {
   if (paid) return <span className="rounded-full bg-success/12 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-success ring-1 ring-inset ring-success/25">Paid</span>;
   if (partial) return <span className="rounded-full bg-violet/12 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet ring-1 ring-inset ring-violet/25">Partially paid</span>;
   return null;
+}
+
+// ===========================================================================
+// New invoice — 4-step wizard (Customer → Services → Payment → Review).
+// Mirrors the Add-customer / appointment flows: progress header, slide
+// transitions, one focused question per step, and a review-with-edit. Same
+// billing model and calculations as the single-form version it replaces.
+// ===========================================================================
+
+const INV_STEPS = ["Customer", "Services", "Payment", "Review"] as const;
+const INV_DRAFT_KEY = "ds-new-invoice-draft";
+const invStepVariants = {
+  enter: (d: number) => ({ opacity: 0, x: d >= 0 ? 32 : -32 }),
+  center: { opacity: 1, x: 0 },
+};
+
+function NewInvoiceWizard({ open, onClose, customers, create, markSent }: {
+  open: boolean;
+  onClose: () => void;
+  customers: Customer[];
+  create: (input: NewInvoice) => Promise<Invoice>;
+  markSent: (id: string) => Promise<void>;
+}) {
+  const { services } = useServices();
+  const { ws } = useWorkspace();
+
+  const [step, setStep] = useState(0);
+  const [maxStep, setMaxStep] = useState(0);
+  const [dir, setDir] = useState(1);
+  const [tried, setTried] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [customerId, setCustomerId] = useState("");
+  const [vehicleId, setVehicleId] = useState("");
+  const [lines, setLines] = useState<LineRow[]>([blankLine()]);
+  const [taxRate, setTaxRate] = useState("");
+  const [deposit, setDeposit] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [notes, setNotes] = useState("");
+  const [internalNotes, setInternalNotes] = useState("");
+
+  const { vehicles } = useVehicles(customerId || null);
+
+  const taxLabel = (ws?.settings?.tax_label || "Sales tax").trim() || "Sales tax";
+  const defaultTaxRate = ws?.settings?.tax_enabled ? ws?.settings?.tax_rate ?? null : null;
+  const num = (s: string) => { const n = Number(s); return Number.isFinite(n) ? n : 0; };
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  // On open: restore a saved draft if there is one, else start fresh.
+  useEffect(() => {
+    if (!open) return;
+    setDir(1); setTried(false); setBusy(false); setError(null);
+    try {
+      const raw = sessionStorage.getItem(INV_DRAFT_KEY);
+      if (raw) {
+        const d = JSON.parse(raw);
+        setCustomerId(d.customerId || ""); setVehicleId(d.vehicleId || "");
+        setLines(Array.isArray(d.lines) && d.lines.length
+          ? d.lines.map((l: any) => ({ id: l.id || crypto.randomUUID(), service_id: l.service_id ?? null, description: l.description || "", quantity: l.quantity ?? 1, unit_price: l.unit_price ?? 0 }))
+          : [blankLine()]);
+        setTaxRate(d.taxRate ?? ""); setDeposit(d.deposit ?? ""); setDueDate(d.dueDate || todayStr);
+        setNotes(d.notes ?? ""); setInternalNotes(d.internalNotes ?? "");
+        const s = Math.max(0, Math.min(INV_STEPS.length - 1, d.step ?? 0));
+        setStep(s); setMaxStep(Math.max(s, d.maxStep ?? s));
+        return;
+      }
+    } catch { /* fall through to fresh */ }
+    setCustomerId(""); setVehicleId(""); setLines([blankLine()]);
+    setTaxRate(defaultTaxRate != null ? String(defaultTaxRate) : "");
+    setDeposit(""); setDueDate(todayStr); setNotes(""); setInternalNotes("");
+    setStep(0); setMaxStep(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Settings can land after the modal opens; seed the tax default once.
+  useEffect(() => {
+    if (open && defaultTaxRate != null && taxRate === "") setTaxRate(String(defaultTaxRate));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultTaxRate]);
+
+  const subtotal = lines.reduce((s, l) => s + (Number(l.quantity) || 0) * (Number(l.unit_price) || 0), 0);
+  const taxRateNum = Math.max(0, num(taxRate));
+  const taxAmount = (subtotal * taxRateNum) / 100;
+  const total = subtotal + taxAmount;
+  const depositAmount = Math.max(0, num(deposit));
+  const amountDue = Math.max(0, total - depositAmount);
+  const invoicePaid = total > 0 && depositAmount >= total;
+  const partiallyPaid = depositAmount > 0 && !invoicePaid;
+  const validLines = lines.filter((l) => l.description.trim() && (Number(l.quantity) || 0) > 0);
+
+  const selectedCustomer = customers.find((c) => c.id === customerId) ?? null;
+  const selectedVehicle = vehicles.find((v) => v.id === vehicleId) ?? null;
+
+  const setLine = (i: number, patch: Partial<LineRow>) => setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+  const pickService = (i: number, serviceId: string) => {
+    const svc = services.find((s) => s.id === serviceId);
+    if (!svc) return setLine(i, { service_id: null });
+    setLine(i, { service_id: svc.id, description: svc.name, unit_price: svc.price });
+  };
+  const setDueDays = (days: number) => { const d = new Date(); d.setDate(d.getDate() + days); setDueDate(d.toISOString().slice(0, 10)); };
+
+  // Per-step gate for the Next button / stepper.
+  const stepValid = [Boolean(customerId), validLines.length > 0, taxRateNum >= 0 && num(deposit) >= 0, true];
+
+  const goto = (n: number, direction: number) => {
+    const s = Math.max(0, Math.min(INV_STEPS.length - 1, n));
+    setDir(direction); setTried(false); setError(null); setStep(s); setMaxStep((m) => Math.max(m, s));
+  };
+  const next = () => { if (!stepValid[step]) { setTried(true); return; } goto(step + 1, 1); };
+  const back = () => goto(step - 1, -1);
+  const jump = (i: number) => { if (i <= maxStep && i !== step) goto(i, i < step ? -1 : 1); };
+
+  const draftPayload = () => JSON.stringify({ customerId, vehicleId, lines, taxRate, deposit, dueDate, notes, internalNotes, step, maxStep });
+  const clearDraft = () => { try { sessionStorage.removeItem(INV_DRAFT_KEY); } catch { /* ignore */ } };
+  const cancel = () => { if (busy) return; clearDraft(); onClose(); };
+  const saveDraft = () => {
+    try { sessionStorage.setItem(INV_DRAFT_KEY, draftPayload()); } catch { /* ignore */ }
+    toast.success("Draft saved — we'll pick up where you left off");
+    onClose();
+  };
+
+  const submit = async (send: boolean) => {
+    if (!customerId) { goto(0, -1); setTried(true); return; }
+    if (validLines.length === 0) { goto(1, -1); setTried(true); return; }
+    setBusy(true); setError(null);
+    try {
+      const input: NewInvoice = {
+        customer_id: customerId,
+        vehicle_id: vehicleId || null,
+        tax: Math.round(taxAmount * 100) / 100,
+        deposit_amount: depositAmount,
+        notes: notes || null,
+        internal_notes: internalNotes || null,
+        due_at: dueDate ? new Date(dueDate).toISOString() : null,
+        lines: validLines.map((l) => ({ description: l.description, quantity: Number(l.quantity) || 1, unit_price: Number(l.unit_price) || 0 })),
+      };
+      const inv = await create(input);
+      if (send) { await markSent(inv.id); toast.success("Invoice created & sent"); }
+      else toast.success("Invoice created");
+      clearDraft();
+      onClose();
+    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  };
+
+  if (!open) return null;
+
+  const dueLabel = (() => {
+    if (!dueDate) return "No due date";
+    if (dueDate === todayStr) return "Due on receipt";
+    const days = Math.round((new Date(dueDate).getTime() - new Date(todayStr).getTime()) / 86_400_000);
+    if (days === 7 || days === 14 || days === 30) return `Net ${days} days`;
+    return new Date(dueDate).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  })();
+
+  const lineRow = (l: LineRow, i: number) => {
+    const lineTotal = (Number(l.quantity) || 0) * (Number(l.unit_price) || 0);
+    const qtyBad = l.description.trim() !== "" && (Number(l.quantity) || 0) <= 0;
+    const priceBad = Number(l.unit_price) < 0;
+    return (
+      <div key={l.id} className="animate-fade-up rounded-xl bg-panel2/40 p-2.5 ring-1 ring-inset ring-line/70 sm:rounded-none sm:bg-transparent sm:p-0 sm:ring-0">
+        <select className="input mb-2 h-9 text-[12.5px] font-medium sm:mb-1.5" value={l.service_id ?? ""}
+          onChange={(e) => (e.target.value ? pickService(i, e.target.value) : setLine(i, { service_id: null }))}>
+          <option value="">Custom line item — or select a service…</option>
+          {services.map((s) => <option key={s.id} value={s.id}>{s.name} · {money(s.price)}</option>)}
+        </select>
+        <div className="grid grid-cols-[minmax(0,1fr)_52px_100px] items-center gap-2 sm:grid-cols-[minmax(0,1fr)_52px_100px_88px_28px]">
+          <input className="input h-9" placeholder="Description" value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} />
+          <input className={cn("input h-9 tnum", qtyBad && "border-danger/60")} type="number" min={1} value={l.quantity} onChange={(e) => setLine(i, { quantity: Number(e.target.value) })} />
+          <input className={cn("input h-9 tnum", priceBad && "border-danger/60")} type="number" min={0} step="0.01" placeholder="0.00" value={l.unit_price} onChange={(e) => setLine(i, { unit_price: Number(e.target.value) })} />
+          <span className="hidden text-right text-[14px] font-bold tnum text-ink sm:block">{money(lineTotal)}</span>
+          <button className="hidden h-9 w-7 items-center justify-center rounded-lg text-ink3 transition-colors hover:text-danger disabled:opacity-30 sm:flex"
+            disabled={lines.length === 1} onClick={() => setLines((ls) => ls.filter((_, idx) => idx !== i))} aria-label="Remove line"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="mt-2 flex items-center justify-between sm:hidden">
+          <span className="text-[12px] text-ink3">Line total <b className="text-[13px] tnum text-ink">{money(lineTotal)}</b></span>
+          <button className="inline-flex items-center gap-1 text-[12px] font-medium text-ink3 transition-colors hover:text-danger disabled:opacity-30" disabled={lines.length === 1} onClick={() => setLines((ls) => ls.filter((_, idx) => idx !== i))}>
+            <X className="h-3.5 w-3.5" /> Remove
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[70] flex items-end justify-center p-0 sm:items-center sm:p-4">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.18 }} className="fixed inset-0 bg-black/50" onClick={cancel} />
+      <motion.div role="dialog" aria-modal="true"
+        initial={{ opacity: 0, y: 24, scale: 0.99 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+        className="surface surface-raised relative z-10 flex max-h-[92dvh] w-full max-w-none flex-col overflow-hidden rounded-t-2xl sm:my-auto sm:max-h-[calc(100dvh-2rem)] sm:max-w-[620px] sm:rounded-2xl">
+        <div aria-hidden className="mx-auto mt-2 h-1 w-9 flex-none rounded-full bg-line2 sm:hidden" />
+
+        {/* Header */}
+        <div className="flex flex-none items-center gap-3 px-5 py-4">
+          <span aria-hidden className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"><ReceiptText className="h-[18px] w-[18px]" /></span>
+          <div className="min-w-0 flex-1">
+            <h3 className="text-[15px] font-semibold leading-tight">New invoice</h3>
+            <p className="mt-0.5 text-[12.5px] leading-snug text-ink3">Step {step + 1} of {INV_STEPS.length} · {INV_STEPS[step]}</p>
+          </div>
+          <button onClick={cancel} aria-label="Close" className="-mr-1.5 flex h-10 w-10 flex-none items-center justify-center rounded-lg text-ink3 transition-colors hover:bg-line2 hover:text-ink active:scale-90 md:h-8 md:w-8"><X className="h-4 w-4" /></button>
+        </div>
+
+        {/* Progress */}
+        <div className="flex-none border-y border-line px-5 py-3">
+          <InvStepper current={step} maxStep={maxStep} onJump={jump} />
+        </div>
+
+        {/* Step body */}
+        <div className="scrollbar-slim min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:min-h-[368px]">
+          <motion.div key={step} custom={dir} variants={invStepVariants} initial="enter" animate="center" transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}>
+            {step === 0 && (
+              <div>
+                <StepHead title="Who is this invoice for?" sub="Choose the customer, and the vehicle if it applies." />
+                <div className="flex flex-col gap-4">
+                  <FieldBlock label="Customer" required icon={<UserRound />} error={tried && !customerId ? "Select a customer." : undefined}>
+                    <Combobox ariaLabel="Customer" value={customerId} onChange={(id) => { setCustomerId(id); setVehicleId(""); }}
+                      options={customers.map((c) => ({ value: c.id, label: c.name, keywords: `${c.phone ?? ""} ${c.email ?? ""}` }))}
+                      searchable clearable placeholder="Select a customer…" searchPlaceholder="Search name or phone…" emptyLabel="No customers yet"
+                      leading={<UserRound className="h-4 w-4" />} invalid={tried && !customerId}
+                      renderOption={(o) => {
+                        const c = customers.find((x) => x.id === o.value);
+                        return (<span className="min-w-0 flex-1"><span className="block truncate text-[13.5px] font-medium text-ink">{o.label}</span>{(c?.phone || c?.email) && <span className="block truncate text-[11.5px] text-ink3">{c?.phone || c?.email}</span>}</span>);
+                      }} />
+                  </FieldBlock>
+                  {selectedCustomer && (
+                    <div className="flex items-center gap-3 rounded-xl border border-line bg-panel2/40 px-3.5 py-3">
+                      <span className="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-brand-500/10 text-[12px] font-bold text-brand-500">{initials(selectedCustomer.name)}</span>
+                      <div className="min-w-0">
+                        <div className="truncate text-[14px] font-semibold text-ink">{selectedCustomer.name}</div>
+                        <div className="mt-0.5 flex flex-col gap-0.5 text-[11.5px] text-ink3">
+                          {selectedCustomer.email && <span className="flex items-center gap-1.5 truncate"><Mail className="h-3 w-3 flex-none" />{selectedCustomer.email}</span>}
+                          {selectedCustomer.phone && <a href={`tel:${selectedCustomer.phone}`} className="flex items-center gap-1.5 truncate transition-colors hover:text-brand-500"><Phone className="h-3 w-3 flex-none" />{selectedCustomer.phone}</a>}
+                          {!selectedCustomer.email && !selectedCustomer.phone && <span>No contact info on file</span>}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <FieldBlock label="Vehicle" icon={<Car />} hint="Optional">
+                    <Combobox ariaLabel="Vehicle" value={vehicleId} onChange={setVehicleId}
+                      options={vehicles.map((v) => ({ value: v.id, label: vehicleLabel(v), keywords: `${v.license_plate ?? ""} ${v.color ?? ""}` }))}
+                      clearable disabled={!customerId} placeholder={customerId ? "No vehicle" : "Select a customer first"} emptyLabel="No vehicles for this customer" leading={<Car className="h-4 w-4" />} />
+                  </FieldBlock>
+                  {selectedVehicle && (
+                    <div className="flex items-center gap-3 rounded-xl border border-line bg-panel2/40 px-3.5 py-3">
+                      <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-panel2 text-ink3"><Car className="h-4 w-4" /></span>
+                      <div className="min-w-0">
+                        <div className="truncate text-[14px] font-semibold text-ink">{vehicleLabel(selectedVehicle)}</div>
+                        {selectedVehicle.color && <div className="truncate text-[11.5px] text-ink3">{selectedVehicle.color}</div>}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {step === 1 && (
+              <div>
+                <StepHead title="What are you charging for?" sub="Add the services or items included in this invoice." />
+                <div className="mb-1.5 hidden grid-cols-[minmax(0,1fr)_52px_100px_88px_28px] gap-2 px-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-ink3 sm:grid">
+                  <span>Item</span><span>Qty</span><span>Unit price</span><span className="text-right">Total</span><span />
+                </div>
+                <div className="flex flex-col gap-2.5">{lines.map((l, i) => lineRow(l, i))}</div>
+                <button type="button" onClick={() => setLines((l) => [...l, blankLine()])}
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-line bg-panel2/60 px-3 py-2 text-[12.5px] font-semibold text-ink2 transition-[transform,border-color,color,background-color] duration-150 hover:border-brand-500/50 hover:bg-brand-500/[0.06] hover:text-brand-500 active:scale-[0.98]">
+                  <Plus className="h-3.5 w-3.5" /> Add service
+                </button>
+                <div className="mt-4 flex items-center justify-between rounded-xl bg-panel2/50 px-3.5 py-3 ring-1 ring-inset ring-line/60">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-ink3">Subtotal</span>
+                  <span className="font-display text-[18px] font-bold tnum text-ink">{money(subtotal)}</span>
+                </div>
+                {tried && validLines.length === 0 && <p className="mt-2 text-[11.5px] text-danger">Add at least one line with a description and a quantity above 0.</p>}
+              </div>
+            )}
+
+            {step === 2 && (
+              <div>
+                <StepHead title="Payment details" sub="Set the tax, deposit, and payment due date." />
+                <div className="flex flex-col gap-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <FieldBlock label={`${taxLabel} rate (%)`} hint={defaultTaxRate != null ? "From settings" : undefined} error={taxRateNum < 0 ? "Tax rate can't be negative." : undefined}>
+                      <input className="input tnum" type="number" min={0} step="0.01" placeholder="0" value={taxRate} onChange={(e) => setTaxRate(e.target.value)} />
+                      {taxAmount > 0 && <p className="mt-1 text-[11.5px] text-ink3">= {money(taxAmount)} {taxLabel.toLowerCase()}</p>}
+                    </FieldBlock>
+                    <FieldBlock label="Deposit paid" error={num(deposit) < 0 ? "Deposit can't be negative." : undefined}>
+                      <div className="relative">
+                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[13px] text-ink3">$</span>
+                        <input className="input tnum pl-7" type="number" min={0} step="0.01" placeholder="0.00" value={deposit} onChange={(e) => setDeposit(e.target.value)}
+                          onBlur={() => { if (deposit.trim() !== "" && !Number.isNaN(Number(deposit))) setDeposit(Math.max(0, Number(deposit)).toFixed(2)); }} />
+                      </div>
+                      {depositAmount > 0 && <p className="mt-1 text-[11.5px] text-ink3">− {money(depositAmount)} toward the total</p>}
+                    </FieldBlock>
+                  </div>
+                  <FieldBlock label="Payment due" icon={<CalendarClock />}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {([["Due on receipt", 0], ["7 days", 7], ["14 days", 14], ["30 days", 30]] as const).map(([label, d]) => {
+                        const target = new Date(); target.setDate(target.getDate() + d);
+                        const active = dueDate === target.toISOString().slice(0, 10);
+                        return (
+                          <button key={label} type="button" onClick={() => (d === 0 ? setDueDate(todayStr) : setDueDays(d))}
+                            className={cn("h-10 rounded-lg border px-3.5 text-[12.5px] font-semibold transition-[transform,border-color,background-color,color] duration-150 active:scale-[0.97]",
+                              active ? "border-brand-500 bg-brand-500/[0.08] text-brand-500" : "border-line bg-panel2/50 text-ink2 hover:border-ink3/50")}>{label}</button>
+                        );
+                      })}
+                      <input className="input h-10 w-auto min-w-[150px] flex-1" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                    </div>
+                  </FieldBlock>
+                  <TotalCard subtotal={subtotal} taxLabel={taxLabel} taxRateNum={taxRateNum} taxAmount={taxAmount} total={total} depositAmount={depositAmount} amountDue={amountDue} paid={invoicePaid} partial={partiallyPaid} />
+                </div>
+              </div>
+            )}
+
+            {step === 3 && (
+              <div>
+                <StepHead title="Review invoice" sub="Make sure everything looks correct before creating the invoice." />
+                <div className="flex flex-col gap-3">
+                  <ReviewSection title="Customer" onEdit={() => jump(0)}>
+                    <div className="text-[14px] font-semibold text-ink">{selectedCustomer?.name ?? "—"}</div>
+                    {selectedVehicle && <div className="mt-0.5 text-[12.5px] text-ink3">{vehicleLabel(selectedVehicle)}{selectedVehicle.color ? ` · ${selectedVehicle.color}` : ""}</div>}
+                  </ReviewSection>
+                  <ReviewSection title="Services" onEdit={() => jump(1)}>
+                    <div className="flex flex-col gap-1.5">
+                      {validLines.length === 0 ? <span className="text-ink3">No services added.</span> : validLines.map((l, i) => (
+                        <div key={i} className="flex items-baseline justify-between gap-3">
+                          <span className="min-w-0 truncate text-ink"><span className="font-medium">{l.description}</span> <span className="text-ink3">× {Number(l.quantity) || 1}</span></span>
+                          <span className="flex-none tnum font-semibold text-ink">{money((Number(l.quantity) || 0) * (Number(l.unit_price) || 0))}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </ReviewSection>
+                  <ReviewSection title="Payment" onEdit={() => jump(2)}>
+                    <div className="flex flex-col gap-1">
+                      <div className="flex justify-between"><span className="text-ink2">Subtotal</span><span className="tnum text-ink">{money(subtotal)}</span></div>
+                      {taxAmount > 0 && <div className="flex justify-between"><span className="text-ink2">{taxLabel}{taxRateNum ? ` (${taxRateNum}%)` : ""}</span><span className="tnum text-ink">{money(taxAmount)}</span></div>}
+                      <div className="flex justify-between border-t border-line/70 pt-1"><span className="font-semibold text-ink">Total</span><span className="tnum font-semibold text-ink">{money(total)}</span></div>
+                      {depositAmount > 0 && <div className="flex justify-between"><span className="text-ink2">Deposit paid</span><span className="tnum text-success">− {money(depositAmount)}</span></div>}
+                      <div className="mt-1.5 flex items-center justify-between border-t border-line/70 pt-2">
+                        <span className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.07em] text-ink2">Amount due <PayPill paid={invoicePaid} partial={partiallyPaid} /></span>
+                        <span className="font-display text-[20px] font-bold tnum text-ink">{money(amountDue)}</span>
+                      </div>
+                      <div className="mt-1 flex justify-between text-[12px]"><span className="text-ink3">Payment due</span><span className="text-ink2">{dueLabel}</span></div>
+                    </div>
+                  </ReviewSection>
+
+                  <FieldBlock label="Customer note" icon={<StickyNote />} hint="Shown on the invoice">
+                    <textarea className="input" rows={2} placeholder="Payment instructions, thank-you message, or anything the customer should know…" value={notes} onChange={(e) => setNotes(e.target.value)} />
+                  </FieldBlock>
+                  <FieldBlock label="Internal note" icon={<Lock />} hint="Staff only · never shown to customer">
+                    <textarea className="input" rows={2} placeholder="Private job or payment notes…" value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} />
+                  </FieldBlock>
+                  {error && <div className="rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
+                </div>
+              </div>
+            )}
+          </motion.div>
+        </div>
+
+        {/* Footer nav */}
+        <div className="flex flex-none flex-wrap items-center gap-2 border-t border-line px-5 py-3.5 pb-[calc(0.875rem+env(safe-area-inset-bottom))] sm:pb-3.5">
+          {step === 0
+            ? <Button onClick={cancel}>Cancel</Button>
+            : <Button onClick={back} disabled={busy} icon={<ArrowLeft />}>Back</Button>}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {step < 3 ? (
+              <Button variant="primary" onClick={next} disabled={!stepValid[step]}>Next <ArrowRight className="h-4 w-4" /></Button>
+            ) : (
+              <>
+                <Button onClick={saveDraft} disabled={busy}>Save draft</Button>
+                <Button onClick={() => submit(true)} disabled={busy} icon={busy ? <Loader2 className="animate-spin" /> : <Send />}>Create &amp; send</Button>
+                <Button variant="primary" onClick={() => submit(false)} disabled={busy} icon={busy ? <Loader2 className="animate-spin" /> : undefined}>{busy ? "Saving…" : "Create invoice"}</Button>
+              </>
+            )}
+          </div>
+        </div>
+      </motion.div>
+    </div>,
+    document.body
+  );
+}
+
+function InvStepper({ current, maxStep, onJump }: { current: number; maxStep: number; onJump: (i: number) => void }) {
+  return (
+    <div className="flex items-center">
+      {INV_STEPS.map((label, i) => {
+        const done = i < current;
+        const active = i === current;
+        const clickable = i <= maxStep && i !== current;
+        return (
+          <div key={label} className="flex items-center gap-2 last:flex-none [&:not(:last-child)]:flex-1">
+            <button type="button" disabled={!clickable} onClick={() => onJump(i)} className={cn("flex items-center gap-2 rounded-lg outline-none", clickable ? "cursor-pointer" : "cursor-default")}>
+              <span className={cn("flex h-6 w-6 flex-none items-center justify-center rounded-full text-[11px] font-bold transition-colors",
+                done ? "bg-brand-500 text-white" : active ? "bg-brand-500/12 text-brand-500 ring-1 ring-brand-500" : "bg-line2 text-ink3")}>
+                {done ? <Check className="h-3.5 w-3.5" /> : i + 1}
+              </span>
+              <span className={cn("hidden text-[12px] font-semibold sm:inline", active ? "text-ink" : done ? "text-ink2" : "text-ink3")}>{label}</span>
+            </button>
+            {i < INV_STEPS.length - 1 && <span className={cn("h-px flex-1", i < current ? "bg-brand-500/50" : "bg-line")} />}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function StepHead({ title, sub }: { title: string; sub: string }) {
+  return (
+    <div className="mb-5">
+      <h4 className="font-display text-[17px] font-bold tracking-tight text-ink">{title}</h4>
+      <p className="mt-1 text-[13px] leading-relaxed text-ink3">{sub}</p>
+    </div>
+  );
+}
+
+function ReviewSection({ title, onEdit, children }: { title: string; onEdit: () => void; children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border border-line bg-panel2/30 p-3.5">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[10.5px] font-bold uppercase tracking-[0.07em] text-ink3">{title}</span>
+        <button type="button" onClick={onEdit} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] font-semibold text-brand-500 transition-colors hover:bg-brand-500/10"><Pencil className="h-3.5 w-3.5" /> Edit</button>
+      </div>
+      <div className="text-[13px]">{children}</div>
+    </div>
+  );
+}
+
+function TotalCard({ subtotal, taxLabel, taxRateNum, taxAmount, total, depositAmount, amountDue, paid, partial }: {
+  subtotal: number; taxLabel: string; taxRateNum: number; taxAmount: number; total: number; depositAmount: number; amountDue: number; paid: boolean; partial: boolean;
+}) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-brand-500/20 bg-gradient-to-b from-brand-500/[0.06] to-brand-500/[0.015] shadow-[0_1px_2px_rgba(16,22,38,0.04),0_10px_26px_-16px_rgba(46,123,255,0.28)]">
+      <div className="flex flex-col gap-1.5 px-4 py-3.5 text-[13px]">
+        <div className="flex items-center justify-between"><span className="text-ink2">Subtotal</span><span className="tnum text-ink">{money(subtotal)}</span></div>
+        {taxAmount > 0 && <div className="flex items-center justify-between"><span className="text-ink2">{taxLabel}{taxRateNum ? ` (${taxRateNum}%)` : ""}</span><span className="tnum text-ink">{money(taxAmount)}</span></div>}
+        <div className="mt-1 flex items-center justify-between border-t border-line/70 pt-1.5"><span className="font-semibold text-ink">Total</span><span className="tnum font-semibold text-ink">{money(total)}</span></div>
+        {depositAmount > 0 && <div className="flex items-center justify-between"><span className="text-ink2">Deposit paid</span><span className="tnum text-success">− {money(depositAmount)}</span></div>}
+      </div>
+      <div className="flex items-end justify-between border-t border-brand-500/20 bg-brand-500/[0.04] px-4 py-3">
+        <div className="flex items-center gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink2">Amount due</span><PayPill paid={paid} partial={partial} /></div>
+        <span className="font-display text-[26px] font-bold leading-none tnum text-ink">{money(amountDue)}</span>
+      </div>
+    </div>
+  );
 }
