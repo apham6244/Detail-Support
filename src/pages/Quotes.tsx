@@ -15,6 +15,12 @@ import {
   Car,
   Loader2,
   EyeOff,
+  ReceiptText,
+  SlidersHorizontal,
+  CalendarClock,
+  StickyNote,
+  Lock,
+  Mail,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
@@ -51,8 +57,12 @@ const STATUS_STYLE: Record<QuoteStatus, string> = {
 const fmtDate = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—";
 
-type LineRow = { service_id: string | null; description: string; quantity: number; unit_price: number };
-const blankLine = (): LineRow => ({ service_id: null, description: "", quantity: 1, unit_price: 0 });
+type LineRow = { id: string; service_id: string | null; description: string; quantity: number; unit_price: number };
+const blankLine = (): LineRow => ({ id: crypto.randomUUID(), service_id: null, description: "", quantity: 1, unit_price: 0 });
+
+/** Up-to-two-letter initials for the selected-customer avatar chip. */
+const initials = (name: string) =>
+  name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("") || "?";
 
 function StatusPill({ q }: { q: Quote }) {
   const s = effectiveQuoteStatus(q);
@@ -164,7 +174,7 @@ export default function Quotes() {
   const openEdit = async (q: Quote) => {
     const ls = await quotesApi.loadLines(q.id);
     const loaded = ls.length
-      ? ls.map((l) => ({ service_id: l.service_id ?? null, description: l.description, quantity: l.quantity, unit_price: l.unit_price }))
+      ? ls.map((l) => ({ id: crypto.randomUUID(), service_id: l.service_id ?? null, description: l.description, quantity: l.quantity, unit_price: l.unit_price }))
       : [blankLine()];
     setEditingId(q.id);
     setCustomerId(q.customer_id);
@@ -327,8 +337,10 @@ export default function Quotes() {
       <Modal
         open={formOpen}
         onClose={() => setFormOpen(false)}
-        size="lg"
+        size="xl"
+        icon={<ReceiptText />}
         title={editingId ? "Edit quote" : "New quote"}
+        subtitle={editingId ? "Update this estimate for your customer" : "Create a professional quote for your customer"}
         footer={
           editingId ? (
             <>
@@ -354,7 +366,7 @@ export default function Quotes() {
           {/* Customer + vehicle */}
           <div className="flex flex-col gap-3">
             <div className="grid gap-4 sm:grid-cols-2">
-              <FieldBlock label="Customer" required error={tried && problems.customer ? "Select a customer." : undefined}>
+              <FieldBlock label="Customer" required icon={<UserRound />} error={tried && problems.customer ? "Select a customer." : undefined}>
                 <Combobox
                   ariaLabel="Customer"
                   value={customerId}
@@ -371,13 +383,13 @@ export default function Quotes() {
                     return (
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[13.5px] font-medium text-ink">{o.label}</span>
-                        {c?.phone && <span className="block truncate text-[11.5px] text-ink3">{c.phone}</span>}
+                        {(c?.email || c?.phone) && <span className="block truncate text-[11.5px] text-ink3">{c?.email || c?.phone}</span>}
                       </span>
                     );
                   }}
                 />
               </FieldBlock>
-              <FieldBlock label="Vehicle" hint="Optional">
+              <FieldBlock label="Vehicle" icon={<Car />} hint="Optional">
                 <Combobox
                   ariaLabel="Vehicle"
                   value={vehicleId}
@@ -392,59 +404,82 @@ export default function Quotes() {
               </FieldBlock>
             </div>
 
+            {/* Selected customer/vehicle as real entities */}
             {selectedCustomer && (
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg bg-panel2/50 px-3 py-2 text-[12.5px]">
-                <span className="inline-flex items-center gap-1.5 font-semibold text-ink"><UserRound className="h-3.5 w-3.5 text-ink3" />{selectedCustomer.name}</span>
-                {selectedCustomer.phone && (
-                  <a href={`tel:${selectedCustomer.phone}`} className="inline-flex items-center gap-1.5 text-ink2 transition-colors hover:text-brand-500"><Phone className="h-3.5 w-3.5 text-ink3" />{selectedCustomer.phone}</a>
-                )}
-                {selectedVehicle ? (
-                  <span className="inline-flex items-center gap-1.5 text-ink2"><Car className="h-3.5 w-3.5 text-ink3" />{vehicleLabel(selectedVehicle)}</span>
-                ) : vehicles.length > 0 ? (
-                  <span className="text-ink3">{vehicles.length} vehicle{vehicles.length === 1 ? "" : "s"} on file</span>
-                ) : null}
+              <div className="grid gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-2">
+                <div className="flex items-center gap-2.5 bg-panel2/50 px-3 py-2.5">
+                  <span className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-brand-500/10 text-[11px] font-bold text-brand-500">{initials(selectedCustomer.name)}</span>
+                  <div className="min-w-0">
+                    <div className="truncate text-[13px] font-semibold text-ink">{selectedCustomer.name}</div>
+                    {selectedCustomer.email ? (
+                      <div className="flex items-center gap-1 truncate text-[11.5px] text-ink3"><Mail className="h-3 w-3 flex-none" />{selectedCustomer.email}</div>
+                    ) : selectedCustomer.phone ? (
+                      <a href={`tel:${selectedCustomer.phone}`} className="flex items-center gap-1 truncate text-[11.5px] text-ink3 transition-colors hover:text-brand-500"><Phone className="h-3 w-3 flex-none" />{selectedCustomer.phone}</a>
+                    ) : (
+                      <div className="text-[11.5px] text-ink3">No contact info on file</div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2.5 bg-panel2/50 px-3 py-2.5">
+                  <span className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-panel2 text-ink3"><Car className="h-4 w-4" /></span>
+                  <div className="min-w-0">
+                    {selectedVehicle ? (
+                      <>
+                        <div className="truncate text-[13px] font-semibold text-ink">{vehicleLabel(selectedVehicle)}</div>
+                        {selectedVehicle.color && <div className="truncate text-[11.5px] text-ink3">{selectedVehicle.color}</div>}
+                      </>
+                    ) : (
+                      <div className="text-[12.5px] text-ink3">{vehicles.length > 0 ? `${vehicles.length} vehicle${vehicles.length === 1 ? "" : "s"} on file` : "No vehicle on file"}</div>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
           </div>
 
-          {/* Line items */}
+          {/* Line items — the hero section */}
           <div>
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-ink2">Line items</span>
-              <button className="inline-flex items-center gap-1 text-[12.5px] font-semibold text-brand-500 hover:text-brand-600" onClick={() => setLines((l) => [...l, blankLine()])}>
+            <div className="mb-2.5 flex items-center gap-2">
+              <ReceiptText className="h-4 w-4 text-brand-500" />
+              <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-ink2">Line items</span>
+              <button
+                type="button"
+                onClick={() => setLines((l) => [...l, blankLine()])}
+                className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-line bg-panel2/60 px-2.5 py-1.5 text-[12px] font-semibold text-ink2 transition-[transform,border-color,color,background-color] duration-150 hover:border-brand-500/50 hover:bg-brand-500/[0.06] hover:text-brand-500 active:scale-[0.97]"
+              >
                 <Plus className="h-3.5 w-3.5" /> Add line
               </button>
             </div>
 
             {/* Column headers — desktop only */}
-            <div className="mb-1 hidden grid-cols-[minmax(0,1fr)_54px_96px_84px_28px] gap-2 px-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-ink3 sm:grid">
+            <div className="mb-1.5 hidden grid-cols-[minmax(0,1fr)_52px_100px_88px_28px] gap-2 px-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-ink3 sm:grid">
               <span>Item</span><span>Qty</span><span>Unit price</span><span className="text-right">Total</span><span />
             </div>
 
-            <div className="flex flex-col gap-2.5 sm:gap-2">
+            <div className="flex flex-col gap-2.5">
               {lines.map((l, i) => {
                 const lineTotal = (Number(l.quantity) || 0) * (Number(l.unit_price) || 0);
                 const qtyBad = l.description.trim() !== "" && (Number(l.quantity) || 0) <= 0;
                 const priceBad = Number(l.unit_price) < 0;
                 return (
-                  <div key={i} className="rounded-lg bg-panel2/40 p-2.5 sm:bg-transparent sm:p-0">
+                  <div key={l.id} className="animate-fade-up rounded-xl bg-panel2/40 p-2.5 ring-1 ring-inset ring-line/70 sm:rounded-none sm:bg-transparent sm:p-0 sm:ring-0">
                     <select
-                      className="input mb-1.5 h-9 text-[12.5px]"
+                      className="input mb-2 h-9 text-[12.5px] font-medium sm:mb-1.5"
                       value={l.service_id ?? ""}
                       onChange={(e) => (e.target.value ? pickService(i, e.target.value) : setLine(i, { service_id: null }))}
                     >
-                      <option value="">Link a service to auto-fill price…</option>
+                      <option value="">Custom line item — or select a service…</option>
                       {services.map((s) => (
                         <option key={s.id} value={s.id}>{s.name} · {money(s.price)}</option>
                       ))}
                     </select>
-                    <div className="grid grid-cols-[minmax(0,1fr)_54px_96px] items-center gap-2 sm:grid-cols-[minmax(0,1fr)_54px_96px_84px_28px]">
+                    <div className="grid grid-cols-[minmax(0,1fr)_52px_100px] items-center gap-2 sm:grid-cols-[minmax(0,1fr)_52px_100px_88px_28px]">
                       <input className="input h-9" placeholder="Description" value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} />
                       <input className={cn("input h-9 tnum", qtyBad && "border-danger/60")} type="number" min={1} value={l.quantity} onChange={(e) => setLine(i, { quantity: Number(e.target.value) })} />
                       <input className={cn("input h-9 tnum", priceBad && "border-danger/60")} type="number" min={0} step="0.01" placeholder="0.00" value={l.unit_price} onChange={(e) => setLine(i, { unit_price: Number(e.target.value) })} />
-                      <span className="hidden text-right text-[13px] font-semibold tnum text-ink sm:block">{money(lineTotal)}</span>
+                      <span className="hidden text-right text-[14px] font-bold tnum text-ink sm:block">{money(lineTotal)}</span>
                       <button
-                        className="hidden h-9 w-7 items-center justify-center rounded-lg text-ink3 hover:text-danger disabled:opacity-30 sm:flex"
+                        className="hidden h-9 w-7 items-center justify-center rounded-lg text-ink3 transition-colors hover:text-danger disabled:opacity-30 sm:flex"
                         disabled={lines.length === 1}
                         onClick={() => setLines((ls) => ls.filter((_, idx) => idx !== i))}
                         aria-label="Remove line"
@@ -453,9 +488,9 @@ export default function Quotes() {
                       </button>
                     </div>
                     {/* Mobile: line total + remove */}
-                    <div className="mt-1.5 flex items-center justify-between sm:hidden">
-                      <span className="text-[12px] text-ink3">Line total <b className="tnum text-ink">{money(lineTotal)}</b></span>
-                      <button className="inline-flex items-center gap-1 text-[12px] font-medium text-ink3 hover:text-danger disabled:opacity-30" disabled={lines.length === 1} onClick={() => setLines((ls) => ls.filter((_, idx) => idx !== i))}>
+                    <div className="mt-2 flex items-center justify-between sm:hidden">
+                      <span className="text-[12px] text-ink3">Line total <b className="text-[13px] tnum text-ink">{money(lineTotal)}</b></span>
+                      <button className="inline-flex items-center gap-1 text-[12px] font-medium text-ink3 transition-colors hover:text-danger disabled:opacity-30" disabled={lines.length === 1} onClick={() => setLines((ls) => ls.filter((_, idx) => idx !== i))}>
                         <XIcon className="h-3.5 w-3.5" /> Remove
                       </button>
                     </div>
@@ -463,67 +498,76 @@ export default function Quotes() {
                 );
               })}
             </div>
-            {tried && problems.lines && <p className="mt-1.5 text-[11.5px] text-danger">Add at least one line with a description and a quantity above 0.</p>}
+            {tried && problems.lines && <p className="mt-2 text-[11.5px] text-danger">Add at least one line with a description and a quantity above 0.</p>}
           </div>
 
-          {/* Discount + tax + expiry */}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <FieldBlock label="Discount" error={problems.discount ? "Discount can't exceed the subtotal." : undefined}>
-              <div className="flex gap-2">
-                <div className="flex flex-none rounded-lg bg-panel2 p-0.5 text-[12.5px] font-semibold">
-                  {(["amount", "percent"] as const).map((m) => (
-                    <button key={m} type="button" onClick={() => setDiscountMode(m)}
-                      className={cn("w-8 rounded-md py-1.5 transition-colors", discountMode === m ? "bg-panel text-ink shadow-sm" : "text-ink3")}>
-                      {m === "amount" ? "$" : "%"}
-                    </button>
-                  ))}
+          {/* Adjustments */}
+          <div>
+            <div className="mb-2.5 flex items-center gap-2">
+              <SlidersHorizontal className="h-4 w-4 text-brand-500" />
+              <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-ink2">Adjustments</span>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FieldBlock label="Discount" error={problems.discount ? "Discount can't exceed the subtotal." : undefined}>
+                <div className="flex gap-2">
+                  <div className="flex flex-none rounded-lg bg-panel2 p-0.5 text-[13px] font-semibold ring-1 ring-inset ring-line">
+                    {(["amount", "percent"] as const).map((m) => (
+                      <button key={m} type="button" onClick={() => setDiscountMode(m)}
+                        className={cn("w-9 rounded-md py-1.5 transition-colors", discountMode === m ? "bg-brand-500/15 text-brand-500" : "text-ink3 hover:text-ink")}>
+                        {m === "amount" ? "$" : "%"}
+                      </button>
+                    ))}
+                  </div>
+                  <input className="input tnum" type="number" min={0} step={discountMode === "percent" ? 1 : 0.01}
+                    placeholder={discountMode === "percent" ? "0" : "0.00"} value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} />
                 </div>
-                <input className="input tnum" type="number" min={0} step={discountMode === "percent" ? 1 : 0.01}
-                  placeholder={discountMode === "percent" ? "0" : "0.00"} value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} />
-              </div>
-              {discountAmount > 0 && !problems.discount && <p className="mt-1 text-[11.5px] text-ink3">− {money(discountAmount)} off the subtotal</p>}
-            </FieldBlock>
+                {discountAmount > 0 && !problems.discount && <p className="mt-1 text-[11.5px] text-ink3">− {money(discountAmount)} off the subtotal</p>}
+              </FieldBlock>
 
-            <FieldBlock label={`${taxLabel} rate (%)`} hint={defaultTaxRate != null ? "From settings" : undefined}
-              error={taxRateNum < 0 ? "Tax rate can't be negative." : undefined}>
-              <input className="input tnum" type="number" min={0} step="0.01" placeholder="0" value={taxRate} onChange={(e) => setTaxRate(e.target.value)} />
-              {taxAmount > 0 && <p className="mt-1 text-[11.5px] text-ink3">= {money(taxAmount)} {taxLabel.toLowerCase()}</p>}
-            </FieldBlock>
+              <FieldBlock label={`${taxLabel} rate (%)`} hint={defaultTaxRate != null ? "From settings" : undefined}
+                error={taxRateNum < 0 ? "Tax rate can't be negative." : undefined}>
+                <input className="input tnum" type="number" min={0} step="0.01" placeholder="0" value={taxRate} onChange={(e) => setTaxRate(e.target.value)} />
+                {taxAmount > 0 && <p className="mt-1 text-[11.5px] text-ink3">= {money(taxAmount)} {taxLabel.toLowerCase()}</p>}
+              </FieldBlock>
+            </div>
           </div>
 
-          <FieldBlock label="Quote expires" error={problems.expires ? "Expiration can't be before today." : undefined}>
+          {/* Expiration */}
+          <FieldBlock label="Quote expires" icon={<CalendarClock />} error={problems.expires ? "Expiration can't be before today." : undefined}>
             <div className="flex flex-wrap items-center gap-2">
               {[7, 14, 30].map((d) => {
                 const target = new Date(); target.setDate(target.getDate() + d);
                 const active = validUntil === target.toISOString().slice(0, 10);
                 return (
                   <button key={d} type="button" onClick={() => setExpiryDays(d)}
-                    className={cn("rounded-lg border px-3 py-2 text-[12.5px] font-semibold transition-colors",
+                    className={cn("h-10 rounded-lg border px-3.5 text-[12.5px] font-semibold transition-[transform,border-color,background-color,color] duration-150 active:scale-[0.97]",
                       active ? "border-brand-500 bg-brand-500/[0.08] text-brand-500" : "border-line bg-panel2/50 text-ink2 hover:border-ink3/50")}>
                     {d} days
                   </button>
                 );
               })}
-              <input className="input h-10 w-auto flex-1" type="date" min={todayStr} value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
+              <input className="input h-10 w-auto min-w-[150px] flex-1" type="date" min={todayStr} value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
             </div>
           </FieldBlock>
 
-          {/* Totals */}
-          <div className="rounded-lg bg-panel2 px-3.5 py-3 text-[13px]">
-            <Row label="Subtotal" value={money(subtotal)} />
-            {discountAmount > 0 && <Row label="Discount" value={`- ${money(discountAmount)}`} />}
-            {taxAmount > 0 && <Row label={`${taxLabel}${taxRateNum ? ` (${taxRateNum}%)` : ""}`} value={money(taxAmount)} />}
-            <div className="mt-2 flex items-center justify-between border-t border-line pt-2.5">
-              <span className="text-[13.5px] font-semibold text-ink">Total</span>
-              <span className="font-display text-[19px] font-bold tnum text-ink">{money(total)}</span>
+          {/* Total summary */}
+          <div className="overflow-hidden rounded-xl border border-brand-500/20 bg-gradient-to-b from-brand-500/[0.06] to-brand-500/[0.015] shadow-[0_1px_2px_rgba(16,22,38,0.04),0_10px_26px_-16px_rgba(46,123,255,0.28)]">
+            <div className="flex flex-col gap-1.5 px-4 py-3.5 text-[13px]">
+              <div className="flex items-center justify-between"><span className="text-ink2">Subtotal</span><span className="tnum text-ink">{money(subtotal)}</span></div>
+              {discountAmount > 0 && <div className="flex items-center justify-between"><span className="text-ink2">Discount</span><span className="tnum text-ink">− {money(discountAmount)}</span></div>}
+              {taxAmount > 0 && <div className="flex items-center justify-between"><span className="text-ink2">{taxLabel}{taxRateNum ? ` (${taxRateNum}%)` : ""}</span><span className="tnum text-ink">{money(taxAmount)}</span></div>}
+            </div>
+            <div className="flex items-end justify-between border-t border-brand-500/20 bg-brand-500/[0.04] px-4 py-3">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink2">Total</span>
+              <span className="font-display text-[26px] font-bold leading-none tnum text-ink">{money(total)}</span>
             </div>
           </div>
 
-          <FieldBlock label="Customer note" hint="Shown on the quote">
-            <textarea className="input" rows={2} placeholder="Anything the customer should know — inclusions, prep, terms…" value={notes} onChange={(e) => setNotes(e.target.value)} />
+          <FieldBlock label="Customer note" icon={<StickyNote />} hint="Shown on the quote">
+            <textarea className="input" rows={2} placeholder="Add details about what's included, preparation instructions, or terms…" value={notes} onChange={(e) => setNotes(e.target.value)} />
           </FieldBlock>
 
-          <FieldBlock label="Internal note" hint="Staff only — never shown to the customer">
+          <FieldBlock label="Internal note" icon={<Lock />} hint="Staff only · never shown to customer">
             <textarea className="input" rows={2} placeholder="Private reference — pricing rationale, prep reminders, upsell ideas…" value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} />
           </FieldBlock>
 
@@ -553,12 +597,13 @@ function Row({ label, value }: { label: React.ReactNode; value: React.ReactNode 
 
 /** A div-based labelled field (so it can safely wrap a button-driven Combobox),
  *  with an optional required marker, right-aligned hint, and inline error. */
-function FieldBlock({ label, required, hint, error, children }: {
-  label: string; required?: boolean; hint?: string; error?: string; children: React.ReactNode;
+function FieldBlock({ label, required, hint, error, icon, children }: {
+  label: string; required?: boolean; hint?: string; error?: string; icon?: React.ReactNode; children: React.ReactNode;
 }) {
   return (
     <div>
-      <div className="mb-1.5 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink2">
+      <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink2">
+        {icon && <span className="text-ink3 [&>svg]:h-3.5 [&>svg]:w-3.5">{icon}</span>}
         <span>{label}</span>
         {required && <span className="text-danger" aria-hidden>*</span>}
         {hint && <span className="ml-auto font-medium normal-case tracking-normal text-ink3">{hint}</span>}

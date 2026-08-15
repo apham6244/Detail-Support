@@ -7,6 +7,8 @@ export function Modal({
   open,
   onClose,
   title,
+  subtitle,
+  icon,
   children,
   footer,
   size = "md",
@@ -14,10 +16,14 @@ export function Modal({
   open: boolean;
   onClose: () => void;
   title: string;
+  /** Optional small line under the title. */
+  subtitle?: string;
+  /** Optional icon shown in a tinted tile beside the title. */
+  icon?: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
-  /** Desktop max-width. "md" (default) = max-w-lg; "lg" = max-w-xl for roomier forms. */
-  size?: "md" | "lg";
+  /** Desktop max-width. "md" (default) = max-w-lg; "lg" = max-w-xl; "xl" = max-w-2xl. */
+  size?: "md" | "lg" | "xl";
 }) {
   // Only mount while open. We deliberately skip AnimatePresence's deferred exit:
   // combined with the body portal, its delayed unmount races with React removing
@@ -46,17 +52,25 @@ export function Modal({
         transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
         className={
           "surface surface-raised relative z-10 flex max-h-[92dvh] w-full max-w-none flex-col overflow-hidden rounded-t-2xl sm:my-auto sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl " +
-          (size === "lg" ? "sm:max-w-xl" : "sm:max-w-lg")
+          (size === "xl" ? "sm:max-w-2xl" : size === "lg" ? "sm:max-w-xl" : "sm:max-w-lg")
         }
       >
         {/* Grabber — signals the sheet, phones only. */}
         <div aria-hidden className="mx-auto mt-2 h-1 w-9 flex-none rounded-full bg-line2 sm:hidden" />
-        <div className="flex flex-none items-center justify-between border-b border-line px-5 py-4">
-          <h3 className="text-[15px] font-semibold">{title}</h3>
+        <div className="flex flex-none items-start gap-3 border-b border-line px-5 py-4">
+          {icon && (
+            <span aria-hidden className="mt-0.5 flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-brand-500/10 text-brand-500 [&>svg]:h-[18px] [&>svg]:w-[18px]">
+              {icon}
+            </span>
+          )}
+          <div className="min-w-0 flex-1">
+            <h3 className="text-[15px] font-semibold leading-tight">{title}</h3>
+            {subtitle && <p className="mt-0.5 text-[12.5px] leading-snug text-ink3">{subtitle}</p>}
+          </div>
           <button
             onClick={onClose}
             aria-label="Close"
-            className="flex h-10 w-10 items-center justify-center rounded-lg text-ink3 transition-[transform,background-color,color] duration-150 ease-out hover:bg-line2 hover:text-ink active:scale-90 md:h-8 md:w-8"
+            className="-mr-1.5 flex h-10 w-10 flex-none items-center justify-center rounded-lg text-ink3 transition-[transform,background-color,color] duration-150 ease-out hover:bg-line2 hover:text-ink active:scale-90 md:h-8 md:w-8"
           >
             <X className="h-4 w-4" />
           </button>
