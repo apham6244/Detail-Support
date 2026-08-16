@@ -17,7 +17,7 @@ export function Topbar({ onMenu, onSearch }: { onMenu: () => void; onSearch: () 
   ).toUpperCase();
 
   return (
-    <header className="sticky top-0 z-20 flex h-[60px] items-center gap-4 border-b border-line bg-panel px-4 md:px-[26px]">
+    <header className="sticky top-0 z-20 flex h-[calc(60px+env(safe-area-inset-top))] items-center gap-4 border-b border-line bg-panel px-4 pt-[env(safe-area-inset-top)] md:px-[26px]">
       <button
         onClick={onMenu}
         aria-label="Open menu"

@@ -11,9 +11,19 @@ export type QuoteInput = {
   discount?: number;
   tax?: number;
   notes?: string | null;
+  /** Private staff-only note (migration 028). Written best-effort. */
+  internal_notes?: string | null;
   valid_until?: string | null;
   lines: QuoteLineInput[];
 };
+
+/**
+ * `internal_notes` ships in migration 028. To keep quote create/edit working on
+ * databases that haven't applied it yet, we write it best-effort in a follow-up
+ * call and swallow a "column does not exist" error. Once 028 is applied it just
+ * works (and `select("*")` starts returning it).
+ */
+const isMissingInternalNotes = (msg: string) => /internal_notes/i.test(msg);
 
 const SELECT = "*, customer:customers(name), vehicle:vehicles(year, make, model)";
 
@@ -94,7 +104,20 @@ export function useQuotes() {
         .insert(lines.map((l) => ({ org_id: org.id, quote_id: quote.id, ...l })));
       if (liErr) throw new Error(liErr.message);
     }
-    const mapped = mapQuote(quote);
+
+    let finalQuote = quote;
+    if (input.internal_notes != null && input.internal_notes !== "") {
+      const res = await supabase
+        .from("quotes")
+        .update({ internal_notes: input.internal_notes })
+        .eq("id", quote.id)
+        .select(SELECT)
+        .single();
+      if (!res.error) finalQuote = res.data;
+      else if (!isMissingInternalNotes(res.error.message)) throw new Error(res.error.message);
+    }
+
+    const mapped = mapQuote(finalQuote);
     setQuotes((x) => [mapped, ...x]);
     return mapped;
   };
@@ -128,7 +151,20 @@ export function useQuotes() {
         .insert(lines.map((l) => ({ org_id: org.id, quote_id: id, ...l })));
       if (liErr) throw new Error(liErr.message);
     }
-    const mapped = mapQuote(quote);
+
+    let finalQuote = quote;
+    if (input.internal_notes !== undefined) {
+      const res = await supabase
+        .from("quotes")
+        .update({ internal_notes: input.internal_notes || null })
+        .eq("id", id)
+        .select(SELECT)
+        .single();
+      if (!res.error) finalQuote = res.data;
+      else if (!isMissingInternalNotes(res.error.message)) throw new Error(res.error.message);
+    }
+
+    const mapped = mapQuote(finalQuote);
     setQuotes((x) => x.map((q) => (q.id === id ? mapped : q)));
     return mapped;
   };

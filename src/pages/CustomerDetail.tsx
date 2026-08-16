@@ -1,14 +1,15 @@
 import { useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { motion } from "framer-motion";
 import {
   ArrowLeft, Phone, Mail, MapPin, Car, Trash2, Pencil, Plus,
-  DollarSign, Repeat, CalendarCheck, X as XIcon, Wrench,
-  MessageSquare, ReceiptText, Sparkles, TrendingUp, CalendarClock,
-  UserPlus, XCircle, Image as ImageIcon, Clock, Crown,
-  Gauge, Heart, Award, Gift, AlertTriangle, ArrowUpRight, Star,
+  DollarSign, CalendarCheck, CalendarClock, Clock, X as XIcon, Wrench,
+  MessageSquare, ReceiptText, Image as ImageIcon, UserPlus, XCircle,
+  Crown, Award, Star, StickyNote, Gauge, type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { CountUp } from "@/components/ui/CountUp";
 import { Modal, Field } from "@/components/ui/Modal";
 import { IconBtn, SignInPrompt, money } from "@/components/ui/data";
 import { confirm, toast } from "@/components/ui/feedback";
@@ -19,12 +20,11 @@ import { useCustomers, type CustomerInput } from "@/hooks/useCustomers";
 import { useVehicles, type VehicleInput } from "@/hooks/useVehicles";
 import { useAppointments } from "@/hooks/useAppointments";
 import { useInvoices } from "@/hooks/useInvoices";
-import { useServices } from "@/hooks/useServices";
 import { useJobPhotos } from "@/hooks/useJobPhotos";
 import { useAuth } from "@/lib/auth";
 import { useEntitlements } from "@/lib/entitlements";
 import {
-  vehicleLabel, APPOINTMENT_STATUS_LABEL, type AppointmentStatus, type JobPhoto,
+  vehicleLabel, APPOINTMENT_STATUS_LABEL, type AppointmentStatus, type JobPhoto, type Appointment,
 } from "@/lib/models";
 import { cn } from "@/lib/cn";
 
@@ -43,10 +43,24 @@ const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 const fmtDateTime = (iso: string) =>
   new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+const fmtMonYear = (iso: string) =>
+  new Date(iso).toLocaleDateString(undefined, { month: "short", year: "numeric" });
+const moneyShort = (n: number) => (n >= 1000 ? `$${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : money(n));
+const relDay = (daysSince: number | null, last: string | null) =>
+  last == null ? "—" : daysSince === 0 ? "Today" : daysSince === 1 ? "Yesterday" : fmtDate(last);
 
-const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 const collected = (i: { status: string; total: number; deposit_amount: number }) =>
   i.status === "paid" ? i.total : i.status === "deposit_paid" ? i.deposit_amount : 0;
+
+type TabKey = "overview" | "appointments" | "vehicles" | "invoices" | "photos" | "notes";
+const TAB_DEFS: { key: TabKey; label: string }[] = [
+  { key: "overview", label: "Overview" },
+  { key: "appointments", label: "Appointments" },
+  { key: "vehicles", label: "Vehicles" },
+  { key: "invoices", label: "Invoices" },
+  { key: "photos", label: "Photos" },
+  { key: "notes", label: "Notes" },
+];
 
 export default function CustomerDetail() {
   const { id = "" } = useParams();
@@ -54,17 +68,18 @@ export default function CustomerDetail() {
   const { customers, loading, ready, update, remove } = useCustomers();
   const { appointments } = useAppointments();
   const { invoices } = useInvoices();
-  const { services } = useServices();
   // Also loaded inside VehiclesCard; the hook is cheap and scoped per customer,
-  // and the header/stats need the count before that card renders.
+  // and the header/stats/tab-counts need the counts before that card renders.
   const { vehicles } = useVehicles(id || null);
   const { photos } = useJobPhotos(id || null);
   const { role } = useAuth();
   const ent = useEntitlements();
 
   const canManage = role !== "employee";
+  const gatedHistory = !ent.hasFeature("customer_history");
   const customer = customers.find((c) => c.id === id) ?? null;
 
+  const [tab, setTab] = useState<TabKey>("overview");
   const [editOpen, setEditOpen] = useState(false);
   const [form, setForm] = useState<CustomerInput>({ name: "" });
   const [busy, setBusy] = useState(false);
@@ -87,89 +102,55 @@ export default function CustomerDetail() {
   );
 
   /**
-   * The whole business profile, derived from jobs + invoices + the service
-   * catalog. Nothing here is stored on the customer record — lifetime value, the
-   * health score, the loyalty tier, visit cadence, the favourite service and the
-   * recommendations are all computed, so they stay correct with zero upkeep.
+   * The at-a-glance profile: lifetime value, visit counts, last/next visit and an
+   * earned loyalty tier — all derived from live jobs + invoices, so they stay
+   * correct with zero upkeep. The four numbers here feed the header + stat row.
    */
   const p = useMemo(() => {
     const spent = myInvoices.reduce((s, i) => s + collected(i), 0);
     const done = history.filter((a) => a.status === "completed");
-    const cancelled = history.filter((a) => a.status === "cancelled" || a.status === "no_show");
     const now = Date.now();
     const upcoming = history
       .filter((a) => new Date(a.scheduled_at).getTime() >= now && (a.status === "scheduled" || a.status === "confirmed"))
       .slice(-1)[0] ?? null;
-
     const last = done[0]?.scheduled_at ?? null;
     const daysSince = last ? Math.floor((now - new Date(last).getTime()) / 86_400_000) : null;
     const visits = done.length;
     const avgTicket = visits ? spent / visits : 0;
-    const repeatRate = history.length ? (Math.max(0, visits - 1) / history.length) * 100 : 0;
-    const cancelRate = history.length ? (cancelled.length / history.length) * 100 : 0;
 
-    // Visit cadence — average days between completed visits.
-    const times = done.map((a) => new Date(a.scheduled_at).getTime()).sort((a, b) => a - b);
-    let cadence: number | null = null;
-    if (times.length >= 2) {
-      let sum = 0;
-      for (let i = 1; i < times.length; i++) sum += (times[i] - times[i - 1]) / 86_400_000;
-      cadence = Math.round(sum / (times.length - 1));
-    }
+    const tier: { label: string; tone: Tone; icon: LucideIcon } =
+      spent >= 1500 || visits >= 10
+        ? { label: "VIP", tone: "purple", icon: Crown }
+        : spent >= 600 || visits >= 5
+          ? { label: "Gold", tone: "orange", icon: Award }
+          : visits >= 2
+            ? { label: "Silver", tone: "blue", icon: Star }
+            : { label: "New", tone: "green", icon: UserPlus };
 
-    // Favourite service — most-booked across all appointments.
+    // Most-booked service.
     const counts = new Map<string, number>();
-    for (const a of history) {
-      const n = a.service?.name;
-      if (n) counts.set(n, (counts.get(n) ?? 0) + 1);
-    }
-    let favorite: string | null = null;
-    let favN = 0;
+    for (const a of history) { const n = a.service?.name; if (n) counts.set(n, (counts.get(n) ?? 0) + 1); }
+    let favorite: string | null = null; let favN = 0;
     for (const [n, c] of counts) if (c > favN) { favN = c; favorite = n; }
 
-    // Loyalty / membership tier — earned, not assigned.
-    const tier =
-      spent >= 1500 || visits >= 10
-        ? { label: "VIP", tone: "purple" as const, icon: Crown, perk: "Priority booking + loyalty perks" }
-        : spent >= 600 || visits >= 5
-          ? { label: "Gold", tone: "orange" as const, icon: Award, perk: "Earned through repeat business" }
-          : visits >= 2
-            ? { label: "Silver", tone: "blue" as const, icon: Star, perk: "A returning customer" }
-            : { label: "New", tone: "green" as const, icon: UserPlus, perk: "Just getting started" };
+    // Visit cadence — average days between completed visits.
+    const t = done.map((a) => new Date(a.scheduled_at).getTime()).sort((x, y) => x - y);
+    let cadence: number | null = null;
+    if (t.length >= 2) { let s = 0; for (let i = 1; i < t.length; i++) s += (t[i] - t[i - 1]) / 86_400_000; cadence = Math.round(s / (t.length - 1)); }
 
-    // Health factors (each 0–100) → a weighted health score.
-    const cad = cadence ?? 45;
-    const recency = visits === 0 ? 50 : daysSince == null ? 50 : daysSince <= cad ? 100 : daysSince <= cad * 2 ? 62 : daysSince <= cad * 3 ? 32 : 10;
-    const frequency = Math.min(visits, 8) / 8 * 100;
-    const value = Math.min(spent / 1500, 1) * 100;
-    const loyalty = clamp(repeatRate, 0, 100);
-    let health = visits === 0
-      ? 52
-      : Math.round(recency * 0.35 + frequency * 0.2 + value * 0.25 + loyalty * 0.2 - cancelRate * 0.15);
-    health = clamp(health, 4, 99);
-    const healthState =
-      visits === 0 ? { label: "New customer", tone: "blue" as const }
-        : health >= 80 ? { label: "Excellent", tone: "green" as const }
-          : health >= 60 ? { label: "Healthy", tone: "green" as const }
-            : health >= 40 ? { label: "Needs attention", tone: "orange" as const }
-              : health >= 22 ? { label: "At risk", tone: "orange" as const }
-                : { label: "Dormant", tone: "red" as const };
+    // Lightweight relationship health — recency measured against their own rhythm.
+    const health: { label: string; tone: Tone; score: number | null } =
+      visits === 0 ? { label: "New", tone: "blue", score: null }
+        : (() => {
+          const cad = cadence ?? 45; const ds = daysSince ?? 0;
+          if (ds <= cad) return { label: "Excellent", tone: "green" as Tone, score: 94 };
+          if (ds <= cad * 2) return { label: "Good", tone: "green" as Tone, score: 78 };
+          if (ds <= cad * 3) return { label: "At risk", tone: "orange" as Tone, score: 46 };
+          return { label: "Dormant", tone: "red" as Tone, score: 24 };
+        })();
 
-    // Recommended services — from the catalogue, ones they've not booked yet.
-    const booked = new Set([...counts.keys()].map((n) => n.toLowerCase()));
-    const untried = services
-      .filter((s) => s.active !== false && !booked.has(s.name.toLowerCase()))
-      .sort((a, b) => b.price - a.price)
-      .slice(0, 3);
-    const dueForFavorite = Boolean(favorite && cadence && daysSince != null && daysSince >= cadence);
-
-    return {
-      spent, visits, last, daysSince, upcoming, avgTicket, repeatRate, cancelRate,
-      cancelled: cancelled.length, appointments: history.length, cadence, favorite, favN,
-      tier, health, healthState, factors: { recency, frequency, value, loyalty },
-      untried, dueForFavorite,
-    };
-  }, [myInvoices, history, services, id]);
+    return { spent, visits, appointments: history.length, last, daysSince, upcoming, avgTicket, tier, favorite, cadence, health };
+  }, [myInvoices, history]);
 
   if (!ready) return <SignInPrompt what="customers" />;
   if (loading) return <PageSkeleton variant="detail" />;
@@ -186,8 +167,6 @@ export default function CustomerDetail() {
       </div>
     );
   }
-
-  const first = customer.name.trim().split(/\s+/)[0] || customer.name;
 
   const openEdit = () => {
     setForm({
@@ -215,253 +194,144 @@ export default function CustomerDetail() {
     }
   };
 
-  // Rule-based recommendations ("AI recommendations") — computed from live data,
-  // each only surfaced when the data supports it. Capped so it stays sharp.
-  const recs = buildRecs(p, first);
+  const counts: Partial<Record<TabKey, number>> = {
+    appointments: history.length,
+    vehicles: vehicles.length,
+    invoices: myInvoices.length,
+    photos: photos.length,
+  };
 
   return (
     <div className="animate-fade-up">
       <BackLink />
 
-      {/* ---- Header: identity, tier, and one-thumb actions --------------- */}
-      <section className="surface relative mb-5 mt-3 overflow-hidden rounded-[20px]">
-        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-paint-gloss opacity-30" />
-        <div aria-hidden className={cn("pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full blur-[90px]", TONE[p.tier.tone].glow)} />
-        <div className="relative flex flex-col gap-5 p-5 sm:p-6">
-          <div className="flex flex-wrap items-start gap-4">
-            <div className="flex h-16 w-16 flex-none items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-violet text-[21px] font-bold uppercase text-white shadow-glow">
+      {/* ---- Header: identity + iOS-style quick actions ------------------ */}
+      <motion.section
+        initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+        className="surface relative mt-3 overflow-hidden rounded-2xl"
+      >
+        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-20 bg-paint-gloss opacity-20" />
+        <div className="relative p-5 sm:p-6">
+          <div className="flex items-start gap-4">
+            <div className="flex h-14 w-14 flex-none items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-violet text-[19px] font-bold uppercase text-white shadow-glow sm:h-[60px] sm:w-[60px] sm:text-[21px]">
               {initials(customer.name)}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2.5">
-                <h1 className="text-[24px] font-bold leading-tight tracking-tight">{customer.name}</h1>
-                <span className={cn("inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.06em] ring-1 ring-inset", TONE[p.tier.tone].chip)}>
-                  <p.tier.icon className="h-3 w-3" />{p.tier.label} member
-                </span>
-                <span className={cn("inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.06em] ring-1 ring-inset", TONE[p.healthState.tone].chip)}>
-                  <Heart className="h-3 w-3" />{p.healthState.label}
+              {/* Name is the focal point; VIP pill sits attached, soft and small. */}
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <h1 className="text-[22px] font-bold leading-tight tracking-tight text-ink">{customer.name}</h1>
+                <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-semibold ring-1 ring-inset", TONE[p.tier.tone].chip)}>
+                  <p.tier.icon className="h-3 w-3" />{p.tier.label}
                 </span>
               </div>
-              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[13px] text-ink2">
-                {customer.phone && <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5 text-ink3" />{customer.phone}</span>}
-                {customer.email && <span className="flex items-center gap-1.5"><Mail className="h-3.5 w-3.5 text-ink3" />{customer.email}</span>}
-                {customer.address && <span className="flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5 text-ink3" />{customer.address}</span>}
-                {!customer.phone && !customer.email && !customer.address && <span className="text-ink3">No contact details yet</span>}
+              {/* Contact — quieter: muted, smaller, generous spacing. */}
+              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px] text-ink3">
+                {customer.phone && <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5" />{customer.phone}</span>}
+                {customer.email && <span className="flex min-w-0 items-center gap-1.5"><Mail className="h-3.5 w-3.5 flex-none" /><span className="truncate">{customer.email}</span></span>}
+                {customer.address && <span className="flex min-w-0 items-center gap-1.5"><MapPin className="h-3.5 w-3.5 flex-none" /><span className="truncate">{customer.address}</span></span>}
+                {!customer.phone && !customer.email && !customer.address && <span>No contact details yet</span>}
               </div>
             </div>
-            {canManage && (
-              <IconBtn label="Delete customer" danger
-                onClick={async () => {
-                  if (!(await confirm({ title: `Delete ${customer.name}?`, body: "Their vehicles, jobs and photos are permanently removed too. This can't be undone.", confirmLabel: "Delete customer", tone: "danger" }))) return;
-                  try { await remove(customer.id); toast.success(`${customer.name} deleted`); navigate("/customers"); }
-                  catch (e) { toast.error((e as Error).message); }
-                }}>
-                <Trash2 className="h-4 w-4" />
-              </IconBtn>
-            )}
+            <div className="flex flex-none items-center gap-2">
+              {p.upcoming && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.05em] text-success ring-1 ring-inset ring-success/25">
+                  <CalendarCheck className="h-3 w-3" /> Booked
+                </span>
+              )}
+              {canManage && (
+                <IconBtn label="Delete customer" danger
+                  onClick={async () => {
+                    if (!(await confirm({ title: `Delete ${customer.name}?`, body: "Their vehicles, jobs and photos are permanently removed too. This can't be undone.", confirmLabel: "Delete customer", tone: "danger" }))) return;
+                    try { await remove(customer.id); toast.success(`${customer.name} deleted`); navigate("/customers"); }
+                    catch (e) { toast.error((e as Error).message); }
+                  }}>
+                  <Trash2 className="h-4 w-4" />
+                </IconBtn>
+              )}
+            </div>
           </div>
 
-          {/* relationship dates */}
-          <div className="grid gap-x-6 gap-y-3 border-t border-line pt-4 sm:grid-cols-3">
-            <HeaderFact icon={UserPlus} label="Customer since" value={fmtDate(customer.created_at)} />
-            <HeaderFact icon={CalendarCheck} label="Last appointment"
-              value={p.last ? fmtDate(p.last) : "No visits yet"}
-              hint={p.daysSince !== null ? `${p.daysSince} days ago` : undefined} />
-            <HeaderFact icon={CalendarClock} label="Next appointment"
-              value={p.upcoming ? fmtDateTime(p.upcoming.scheduled_at) : "Nothing booked"}
-              tone={p.upcoming ? "text-success" : undefined} />
-          </div>
-
-          {/* quick actions — tel:/sms:/mailto: work on every device */}
-          <div className="flex flex-wrap gap-2 border-t border-line pt-4">
-            <QuickAction icon={Phone} label="Call" href={customer.phone ? `tel:${customer.phone}` : undefined} />
-            <QuickAction icon={MessageSquare} label="Text" href={customer.phone ? `sms:${customer.phone}` : undefined} />
-            <QuickAction icon={Mail} label="Email" href={customer.email ? `mailto:${customer.email}` : undefined} />
-            {canManage && <QuickAction icon={Plus} label="Book appointment" onClick={() => navigate("/appointments")} primary />}
-            {canManage && <QuickAction icon={ReceiptText} label="Create invoice" onClick={() => navigate("/invoices")} />}
-            <QuickAction icon={Pencil} label="Edit" onClick={openEdit} />
+          {/* Bottom action bar — bare icon circles + relationship age */}
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-x-3 gap-y-3 border-t border-line pt-4">
+            <div className="flex items-center gap-2.5">
+              <ActionCircle icon={Phone} label="Call" href={customer.phone ? `tel:${customer.phone}` : undefined} />
+              <ActionCircle icon={MessageSquare} label="Text" href={customer.phone ? `sms:${customer.phone}` : undefined} />
+              <ActionCircle icon={Mail} label="Email" href={customer.email ? `mailto:${customer.email}` : undefined} />
+              {canManage && <ActionCircle icon={Plus} label="Book appointment" onClick={() => navigate("/appointments")} />}
+              {canManage && <ActionCircle icon={ReceiptText} label="Create invoice" onClick={() => navigate("/invoices")} />}
+              {canManage && <ActionCircle icon={Pencil} label="Edit" onClick={openEdit} />}
+            </div>
+            <span className="text-[12px] text-ink3">Since <span className="font-semibold text-ink2">{fmtMonYear(customer.created_at)}</span></span>
           </div>
         </div>
-      </section>
+      </motion.section>
 
-      {/* ---- Insight KPIs ------------------------------------------------- */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard icon={DollarSign} tone="green" label="Lifetime value" value={money(p.spent)} sub={p.visits ? `${money(p.avgTicket)} avg ticket` : "No revenue yet"} />
-        <StatCard icon={CalendarCheck} tone="blue" label="Total visits" value={String(p.visits)} sub={`${p.appointments} appointments`} />
-        <StatCard icon={Repeat} tone="purple" label="Visit frequency" value={p.cadence ? `${p.cadence}d` : "—"} sub={p.cadence ? "between visits" : "Not enough data"} />
-        <StatCard icon={Wrench} tone="orange" label="Favorite service" value={p.favorite ?? "—"} sub={p.favorite ? `Booked ${p.favN}×` : "No bookings yet"} />
-        <StatCard icon={ReceiptText} tone="green" label="Avg ticket" value={money(p.avgTicket)} sub="Per completed job" />
-        <StatCard icon={TrendingUp} tone="blue" label="Repeat rate" value={`${Math.round(p.repeatRate)}%`} sub="Return bookings" />
-        <StatCard icon={Car} tone="purple" label="Vehicles" value={String(vehicles.length)} sub="On file" />
-        <StatCard icon={XCircle} tone="orange" label="Cancellations" value={`${Math.round(p.cancelRate)}%`} sub={`${p.cancelled} cancelled / no-show`} />
+      {/* ---- Next appointment — the standout status ---------------------- */}
+      <NextAppointmentCard upcoming={p.upcoming} canManage={canManage} onBook={() => navigate("/appointments")} />
+
+      {/* ---- Lifetime stats — one clean, scannable row ------------------- */}
+      <StatsRow vehicles={vehicles.length} details={p.visits} spent={p.spent} last={p.last} daysSince={p.daysSince} />
+
+      {/* ---- Tabs -------------------------------------------------------- */}
+      <div className="mt-6 border-b border-line">
+        <div role="tablist" aria-label="Customer sections" className="scrollbar-slim flex gap-0.5 overflow-x-auto pb-px">
+          {TAB_DEFS.map((t) => {
+            const active = tab === t.key;
+            const count = counts[t.key];
+            return (
+              <button
+                key={t.key}
+                role="tab"
+                aria-selected={active}
+                onClick={() => setTab(t.key)}
+                className={cn(
+                  "relative flex min-h-[42px] flex-none items-center gap-1.5 whitespace-nowrap px-3 text-[13px] font-semibold transition-colors sm:px-3.5",
+                  active ? "text-ink" : "text-ink3 hover:text-ink2"
+                )}
+              >
+                {t.label}
+                {count != null && count > 0 && (
+                  <span className={cn("rounded-full px-1.5 py-0.5 text-[10.5px] font-semibold tabular-nums", active ? "bg-brand-500/10 text-brand-500" : "bg-line2 text-ink3")}>{count}</span>
+                )}
+                {active && <motion.span layoutId="cust-tab" transition={{ type: "spring", stiffness: 420, damping: 36 }} className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-brand-500" />}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {/* ---- Main + sidebar (collapses to one column on mobile) ---------- */}
-      <div className="mt-6 grid gap-6 lg:grid-cols-[1.6fr_1fr]">
-        {/* MAIN */}
-        <div className="flex min-w-0 flex-col gap-6">
-          {/* AI recommendations */}
-          <div className="surface relative overflow-hidden rounded-[20px] p-5 sm:p-6">
-            <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-20 bg-paint-gloss opacity-30" />
-            <div className="relative mb-4 flex items-center gap-2.5">
-              <span className="flex h-9 w-9 flex-none items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-violet text-white shadow-glow"><Sparkles className="h-[18px] w-[18px]" /></span>
-              <div>
-                <h2 className="font-display text-[16px] font-bold tracking-tight text-ink">AI recommendations</h2>
-                <p className="text-[12px] text-ink3">Next best actions from this customer's data</p>
-              </div>
-            </div>
-            {recs.length === 0 ? (
-              <div className="rounded-xl bg-line2/40 px-4 py-6 text-center text-[13px] text-ink3">Nothing to flag — this relationship looks healthy.</div>
-            ) : (
-              <div className="relative flex flex-col gap-2.5">
-                {recs.map((r, i) => (
-                  <div key={i} className="flex items-start gap-3 rounded-xl bg-panel2/50 px-3.5 py-3 ring-1 ring-inset ring-line/60">
-                    <span className={cn("mt-0.5 flex h-7 w-7 flex-none items-center justify-center rounded-lg", TONE[r.tone].bubble)}>
-                      <r.icon className="h-3.5 w-3.5" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[13px] font-semibold text-ink">{r.title}</div>
-                      <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink3">{r.body}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Recent appointments */}
-          <Panel title="Recent appointments" subtitle={`${history.length} total`}
-            action={history.length > 0 ? <Link to="/appointments" className="text-[12.5px] font-semibold text-brand-500">View all</Link> : undefined}>
-            {!ent.hasFeature("customer_history") ? (
-              <FeatureLocked feature="customer_history" title="Service history"
-                description="See every past job, what was done, and what this customer has spent." compact />
-            ) : history.length === 0 ? (
-              <Empty art="garage" title="No jobs yet" body="Book this customer in and their history builds here." />
-            ) : (
-              <div className="divide-y divide-line2">
-                {history.slice(0, 6).map((a) => (
-                  <div key={a.id} className="flex items-center gap-3 py-3">
-                    <div className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"><Wrench className="h-4 w-4" /></div>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13.5px] font-semibold">{a.service?.name ?? "Service"}</div>
-                      <div className="truncate text-xs text-ink3">
-                        {fmtDateTime(a.scheduled_at)}{a.vehicle ? ` · ${vehicleLabel(a.vehicle)}` : ""}
-                      </div>
-                    </div>
-                    <span className="whitespace-nowrap text-[13px] font-semibold tnum">{money(a.price)}</span>
-                    <span className={cn("hidden whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-semibold sm:inline", statusStyle[a.status])}>
-                      {APPOINTMENT_STATUS_LABEL[a.status]}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Panel>
-
-          {/* Service timeline */}
-          <Panel title="Service timeline" subtitle="Everything that's happened, newest first">
-            <ActivityTimeline
-              createdAt={customer.created_at}
-              appointments={history}
-              invoices={myInvoices}
-              photos={photos}
-            />
-          </Panel>
-
-          {/* Photos */}
-          <PhotosCard customerId={customer.id} gated={!ent.hasFeature("customer_history")} />
-        </div>
-
-        {/* SIDEBAR */}
-        <div className="flex min-w-0 flex-col gap-6">
-          {/* Health score */}
-          <div className="surface relative overflow-hidden rounded-[20px] p-5 sm:p-6">
-            <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-20 bg-paint-gloss opacity-30" />
-            <div className="relative mb-4 flex items-center gap-2.5">
-              <span className="flex h-8 w-8 flex-none items-center justify-center rounded-xl bg-brand-500/10 text-brand-500"><Gauge className="h-4 w-4" /></span>
-              <h2 className="font-display text-[15px] font-bold tracking-tight text-ink">Customer health</h2>
-            </div>
-            <div className="relative flex items-center gap-5">
-              <Ring value={p.health} tone={p.healthState.tone} />
-              <div className="min-w-0 flex-1">
-                <div className={cn("text-[15px] font-bold", TONE[p.healthState.tone].text)}>{p.healthState.label}</div>
-                <p className="mt-0.5 text-[12px] leading-relaxed text-ink3">
-                  {healthBlurb(p, first)}
-                </p>
-              </div>
-            </div>
-            <div className="mt-4 flex flex-col gap-2.5 border-t border-line pt-4">
-              <FactorBar label="Recency" value={p.factors.recency} />
-              <FactorBar label="Frequency" value={p.factors.frequency} />
-              <FactorBar label="Spend" value={p.factors.value} />
-              <FactorBar label="Loyalty" value={p.factors.loyalty} />
-            </div>
-          </div>
-
-          {/* Membership & profile */}
-          <div className="surface rounded-[20px] p-5 sm:p-6">
-            <div className="mb-4 flex items-center gap-2.5">
-              <span className={cn("flex h-8 w-8 flex-none items-center justify-center rounded-xl", TONE[p.tier.tone].bubble)}><p.tier.icon className="h-4 w-4" /></span>
-              <h2 className="font-display text-[15px] font-bold tracking-tight text-ink">Membership</h2>
-            </div>
-            <div className={cn("flex items-center justify-between rounded-xl px-3.5 py-3 ring-1 ring-inset", TONE[p.tier.tone].soft)}>
-              <div>
-                <div className={cn("text-[15px] font-bold", TONE[p.tier.tone].text)}>{p.tier.label}</div>
-                <div className="text-[11.5px] text-ink3">{p.tier.perk}</div>
-              </div>
-              <p.tier.icon className={cn("h-6 w-6", TONE[p.tier.tone].text)} />
-            </div>
-            <p className="mt-2 text-[11px] text-ink3">Auto-tier from lifetime spend and visits.</p>
-            <div className="mt-4 flex flex-col gap-3 border-t border-line pt-4">
-              <ProfileRow icon={Gift} label="Referral source" value={customer.referral_source || "Not recorded"} muted={!customer.referral_source} />
-              <ProfileRow icon={UserPlus} label="Customer since" value={fmtDate(customer.created_at)} />
-              <ProfileRow icon={DollarSign} label="Lifetime value" value={money(p.spent)} />
-            </div>
-          </div>
-
-          {/* Recommended services */}
-          <Panel title="Recommended services" subtitle="Upsell opportunities">
-            {(p.untried.length === 0 && !p.dueForFavorite) ? (
-              <div className="rounded-xl bg-line2/40 px-4 py-6 text-center text-[12.5px] text-ink3">They've tried your whole menu — nice.</div>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {p.dueForFavorite && p.favorite && (
-                  <RecoRow name={`${p.favorite} (due again)`} note={`Usually every ${p.cadence}d · last ${p.daysSince}d ago`} tone="green"
-                    onBook={canManage ? () => navigate("/appointments") : undefined} />
-                )}
-                {p.untried.map((s) => (
-                  <RecoRow key={s.id} name={s.name} note={`${money(s.price)} · never booked`} tone="purple"
-                    onBook={canManage ? () => navigate("/appointments") : undefined} />
-                ))}
-              </div>
-            )}
-          </Panel>
-
-          {/* Recent invoices */}
-          <Panel title="Recent invoices" subtitle={myInvoices.length ? `${myInvoices.length} total` : undefined}
-            action={myInvoices.length > 0 ? <Link to="/invoices" className="text-[12.5px] font-semibold text-brand-500">View all</Link> : undefined}>
-            {myInvoices.length === 0 ? (
-              <Empty art="receipt" title="No invoices yet" body="Invoices you create for this customer show up here." />
-            ) : (
-              <div className="divide-y divide-line2">
-                {myInvoices.slice(0, 5).map((i) => (
-                  <div key={i.id} className="flex items-center gap-3 py-2.5">
-                    <div className="flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"><ReceiptText className="h-4 w-4" /></div>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13px] font-semibold">{i.number ? `#${i.number}` : "Invoice"}</div>
-                      <div className="truncate text-[11px] text-ink3">{fmtDate(i.issued_at || i.created_at)}</div>
-                    </div>
-                    <span className="whitespace-nowrap text-[12.5px] font-semibold tnum">{money(i.total)}</span>
-                    <InvoiceBadge status={i.status} />
-                  </div>
-                ))}
-              </div>
-            )}
-          </Panel>
-
-          {/* Vehicles */}
-          <VehiclesCard customerId={customer.id} canManage={canManage} />
-        </div>
+      {/* ---- Tab content ------------------------------------------------- */}
+      <div className="mt-5">
+        {tab === "overview" && (
+          <OverviewTab
+            createdAt={customer.created_at}
+            history={history}
+            invoices={myInvoices}
+            photos={photos}
+            notes={customer.notes ?? ""}
+            gated={gatedHistory}
+            canManage={canManage}
+            onEditNote={() => setTab("notes")}
+            insights={{ health: p.health, avgTicket: p.avgTicket, favorite: p.favorite, cadence: p.cadence, visits: p.visits }}
+          />
+        )}
+        {tab === "appointments" && (
+          <AppointmentsTab history={history} gated={gatedHistory} canManage={canManage} onBook={() => navigate("/appointments")} />
+        )}
+        {tab === "vehicles" && <VehiclesCard customerId={customer.id} canManage={canManage} />}
+        {tab === "invoices" && (
+          <InvoicesTab invoices={myInvoices} canManage={canManage} onCreate={() => navigate("/invoices")} />
+        )}
+        {tab === "photos" && <PhotosCard customerId={customer.id} gated={gatedHistory} />}
+        {tab === "notes" && (
+          <NotesTab
+            customerName={customer.name}
+            initialNotes={customer.notes ?? ""}
+            canManage={canManage}
+            onSave={(notes) => update(customer.id, { notes })}
+          />
+        )}
       </div>
 
       {/* Edit */}
@@ -512,58 +382,238 @@ export default function CustomerDetail() {
 /* ---------------------------------------------------------------- tones */
 
 type Tone = "green" | "blue" | "purple" | "orange" | "red";
-const TONE: Record<Tone, { text: string; bubble: string; chip: string; soft: string; glow: string; hex: string }> = {
-  green:  { text: "text-success",   bubble: "bg-success/12 text-success",     chip: "bg-success/12 text-success ring-success/25",     soft: "bg-success/8 ring-success/20",     glow: "bg-success/20",    hex: "#17A867" },
-  blue:   { text: "text-brand-500", bubble: "bg-brand-500/12 text-brand-500", chip: "bg-brand-500/12 text-brand-500 ring-brand-500/25", soft: "bg-brand-500/8 ring-brand-500/20", glow: "bg-brand-500/20", hex: "#2E7BFF" },
-  purple: { text: "text-violet",    bubble: "bg-violet/12 text-violet",       chip: "bg-violet/12 text-violet ring-violet/25",       soft: "bg-violet/8 ring-violet/20",       glow: "bg-violet/20",     hex: "#7A5BE0" },
-  orange: { text: "text-warning",   bubble: "bg-warning/12 text-warning",     chip: "bg-warning/12 text-warning ring-warning/25",     soft: "bg-warning/8 ring-warning/20",     glow: "bg-warning/20",    hex: "#E08A00" },
-  red:    { text: "text-danger",    bubble: "bg-danger/12 text-danger",       chip: "bg-danger/12 text-danger ring-danger/25",       soft: "bg-danger/8 ring-danger/20",       glow: "bg-danger/20",     hex: "#E5484D" },
+const TONE: Record<Tone, { bubble: string; chip: string }> = {
+  green:  { bubble: "bg-success/12 text-success",     chip: "bg-success/12 text-success ring-success/25" },
+  blue:   { bubble: "bg-brand-500/12 text-brand-500", chip: "bg-brand-500/12 text-brand-500 ring-brand-500/25" },
+  purple: { bubble: "bg-violet/12 text-violet",       chip: "bg-violet/12 text-violet ring-violet/25" },
+  orange: { bubble: "bg-warning/12 text-warning",     chip: "bg-warning/12 text-warning ring-warning/25" },
+  red:    { bubble: "bg-danger/12 text-danger",       chip: "bg-danger/12 text-danger ring-danger/25" },
 };
+const TONE_TEXT: Record<Tone, string> = { green: "text-success", blue: "text-brand-500", purple: "text-violet", orange: "text-warning", red: "text-danger" };
+const TONE_HEX: Record<Tone, string> = { green: "#17A867", blue: "#2E7BFF", purple: "#7A5BE0", orange: "#E08A00", red: "#E1483C" };
 
-/* ---------------------------------------------------------- derivations */
+/* -------------------------------------------------------------- tabs */
 
 type Insights = {
-  spent: number; visits: number; daysSince: number | null; cadence: number | null;
-  favorite: string | null; avgTicket: number; cancelRate: number;
-  upcoming: { scheduled_at: string } | null;
-  tier: { label: string }; untried: { id: string; name: string; price: number }[]; dueForFavorite: boolean;
+  health: { label: string; tone: Tone; score: number | null };
+  avgTicket: number; favorite: string | null; cadence: number | null; visits: number;
 };
 
-function buildRecs(p: Insights, first: string) {
-  const out: { icon: typeof Sparkles; tone: Tone; title: string; body: string }[] = [];
+function OverviewTab({ createdAt, history, invoices, photos, notes, gated, canManage, onEditNote, insights }: {
+  createdAt: string;
+  history: Appointment[];
+  invoices: { id: string; number: string | null; status: string; total: number; issued_at: string; created_at: string }[];
+  photos: JobPhoto[];
+  notes: string;
+  gated: boolean;
+  canManage: boolean;
+  onEditNote: () => void;
+  insights: Insights;
+}) {
+  const completed = history.filter((a) => a.status === "completed");
+  return (
+    <div className="flex flex-col gap-4">
+      <InsightsCard {...insights} />
+      <div className="grid gap-4 lg:grid-cols-2">
+      <Panel title="Recent activity" subtitle="Newest first">
+        {gated ? (
+          <FeatureLocked feature="customer_history" title="Activity history" description="See every past job, invoice and update on one timeline." compact />
+        ) : (
+          <ActivityTimeline createdAt={createdAt} appointments={history} invoices={invoices} photos={photos} limit={7} />
+        )}
+      </Panel>
 
-  if (p.visits === 0) {
-    out.push({ icon: UserPlus, tone: "blue", title: "Get them booked", body: `${first} hasn't had their first detail yet. Book one to kick off the relationship.` });
-  } else {
-    if (p.cadence && p.daysSince != null && p.daysSince > p.cadence * 1.4) {
-      out.push({ icon: Clock, tone: "orange", title: "Overdue for a visit", body: `Usually books every ${p.cadence} days — it's been ${p.daysSince}. A quick "ready to shine again?" text tends to land.` });
-    } else if (p.daysSince != null && p.daysSince > 90) {
-      out.push({ icon: Clock, tone: "orange", title: "Win them back", body: `${p.daysSince} days since ${first}'s last visit. Reach out with a returning-customer offer.` });
-    }
-    if (p.dueForFavorite && p.favorite) {
-      out.push({ icon: Repeat, tone: "green", title: `Rebook ${p.favorite}`, body: `${first}'s go-to service is due again — an easy win to schedule.` });
-    }
-    if (p.untried[0]) {
-      out.push({ icon: Sparkles, tone: "purple", title: `Upsell ${p.untried[0].name}`, body: `${first} has spent ${money(p.spent)} but never tried ${p.untried[0].name} (${money(p.untried[0].price)}). Strong upgrade candidate.` });
-    }
-    if (p.tier.label === "VIP") {
-      out.push({ icon: Gift, tone: "green", title: "Reward your VIP", body: `Top-tier customer — a loyalty perk or referral bonus keeps ${first} coming back.` });
-    }
-    if (p.cancelRate > 25) {
-      out.push({ icon: AlertTriangle, tone: "orange", title: "Cut the no-shows", body: `${Math.round(p.cancelRate)}% of bookings fell through. A reminder the day before helps.` });
-    }
-    if (p.upcoming) {
-      out.push({ icon: CalendarClock, tone: "blue", title: "Next visit booked", body: `Confirmed for ${fmtDateTime(p.upcoming.scheduled_at)}. Prep the bay and any products.` });
-    }
-  }
-  return out.slice(0, 4);
+      <div className="flex flex-col gap-4">
+        <Panel title="Service history" subtitle={completed.length ? `${completed.length} completed` : undefined}>
+          {gated ? (
+            <FeatureLocked feature="customer_history" title="Service history" description="Every past job, what was done, and what it earned." compact />
+          ) : completed.length === 0 ? (
+            <Empty art="garage" title="No completed jobs yet" body="Once a booking is marked complete, it lands here with its price." />
+          ) : (
+            <div className="divide-y divide-line2">
+              {completed.slice(0, 6).map((a) => (
+                <div key={a.id} className="flex items-center gap-3 py-2.5">
+                  <div className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"><Wrench className="h-4 w-4" /></div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[13.5px] font-semibold">{a.service?.name ?? "Service"}</div>
+                    <div className="truncate text-xs text-ink3">{fmtDate(a.scheduled_at)}{a.vehicle ? ` · ${vehicleLabel(a.vehicle)}` : ""}</div>
+                  </div>
+                  <span className="whitespace-nowrap text-[13px] font-semibold tnum">{money(a.price ?? 0)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+
+        <Panel title="Notes" subtitle="Private to your shop">
+          {notes ? (
+            <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-ink2">{notes}</p>
+          ) : (
+            <p className="text-[13px] text-ink3">No notes yet — jot down gate codes, preferences or paint condition.</p>
+          )}
+          {canManage && (
+            <button onClick={onEditNote} className="mt-3 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-brand-500 hover:text-brand-600">
+              <StickyNote className="h-3.5 w-3.5" />{notes ? "Edit note" : "Add a note"}
+            </button>
+          )}
+        </Panel>
+      </div>
+      </div>
+    </div>
+  );
 }
 
-function healthBlurb(p: Insights, first: string) {
-  if (p.visits === 0) return `${first} is new — no visit history yet.`;
-  if (p.daysSince != null && p.cadence && p.daysSince > p.cadence * 1.5) return `Slipping — well past their usual ${p.cadence}-day rhythm.`;
-  if (p.daysSince != null && p.daysSince > 120) return `Quiet for ${p.daysSince} days. Worth a nudge.`;
-  return `${p.visits} visits, ${money(p.spent)} lifetime. Keep the rhythm going.`;
+function AppointmentRow({ a }: { a: Appointment }) {
+  return (
+    <div className="flex items-center gap-3 py-3">
+      <div className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"><Wrench className="h-4 w-4" /></div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[13.5px] font-semibold">{a.service?.name ?? "Service"}</div>
+        <div className="truncate text-xs text-ink3">{fmtDateTime(a.scheduled_at)}{a.vehicle ? ` · ${vehicleLabel(a.vehicle)}` : ""}</div>
+      </div>
+      <span className="whitespace-nowrap text-[13px] font-semibold tnum">{money(a.price ?? 0)}</span>
+      <span className={cn("hidden whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-semibold sm:inline", statusStyle[a.status])}>
+        {APPOINTMENT_STATUS_LABEL[a.status]}
+      </span>
+    </div>
+  );
+}
+
+function AppointmentsTab({ history, gated, canManage, onBook }: {
+  history: Appointment[]; gated: boolean; canManage: boolean; onBook: () => void;
+}) {
+  const now = Date.now();
+  const upcoming = history
+    .filter((a) => new Date(a.scheduled_at).getTime() >= now && (a.status === "scheduled" || a.status === "confirmed"))
+    .sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at));
+  const upcomingIds = new Set(upcoming.map((a) => a.id));
+  const past = history.filter((a) => !upcomingIds.has(a.id));
+
+  return (
+    <Panel
+      title="Appointments"
+      subtitle={history.length ? `${history.length} total` : undefined}
+      action={canManage ? <TabActionButton icon={Plus} label="Book" onClick={onBook} /> : undefined}
+    >
+      {gated ? (
+        <FeatureLocked feature="customer_history" title="Appointment history" description="Every past and upcoming visit for this customer, with status and price." compact />
+      ) : history.length === 0 ? (
+        <Empty
+          art="garage" title="No appointments yet" body="Book this customer in and their schedule builds here."
+          action={canManage ? <TabActionButton icon={Plus} label="Book appointment" onClick={onBook} solid /> : undefined}
+        />
+      ) : (
+        <div className="flex flex-col gap-5">
+          {upcoming.length > 0 && (
+            <div>
+              <GroupLabel>Upcoming</GroupLabel>
+              <div className="divide-y divide-line2">{upcoming.map((a) => <AppointmentRow key={a.id} a={a} />)}</div>
+            </div>
+          )}
+          {past.length > 0 && (
+            <div>
+              <GroupLabel>Past</GroupLabel>
+              <div className="divide-y divide-line2">{past.map((a) => <AppointmentRow key={a.id} a={a} />)}</div>
+            </div>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function InvoicesTab({ invoices, canManage, onCreate }: {
+  invoices: { id: string; number: string | null; status: string; total: number; issued_at: string; created_at: string }[];
+  canManage: boolean; onCreate: () => void;
+}) {
+  return (
+    <Panel
+      title="Invoices"
+      subtitle={invoices.length ? `${invoices.length} total` : undefined}
+      action={canManage ? <TabActionButton icon={ReceiptText} label="Create" onClick={onCreate} /> : undefined}
+    >
+      {invoices.length === 0 ? (
+        <Empty
+          art="receipt" title="No invoices yet" body="Invoices you create for this customer show up here."
+          action={canManage ? <TabActionButton icon={ReceiptText} label="Create invoice" onClick={onCreate} solid /> : undefined}
+        />
+      ) : (
+        <div className="divide-y divide-line2">
+          {invoices.map((i) => (
+            <div key={i.id} className="flex items-center gap-3 py-3">
+              <div className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-brand-500/10 text-brand-500"><ReceiptText className="h-4 w-4" /></div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[13.5px] font-semibold">{i.number ? `#${i.number}` : "Invoice"}</div>
+                <div className="truncate text-[11.5px] text-ink3">{fmtDate(i.issued_at || i.created_at)}</div>
+              </div>
+              <span className="whitespace-nowrap text-[13px] font-semibold tnum">{money(i.total)}</span>
+              <InvoiceBadge status={i.status} />
+            </div>
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function NotesTab({ customerName, initialNotes, canManage, onSave }: {
+  customerName: string; initialNotes: string; canManage: boolean; onSave: (notes: string) => Promise<unknown>;
+}) {
+  const [val, setVal] = useState(initialNotes);
+  const [busy, setBusy] = useState(false);
+  const dirty = val !== initialNotes;
+  const first = customerName.trim().split(/\s+/)[0] || customerName;
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await onSave(val);
+      toast.success("Note saved");
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Panel title="Customer notes" subtitle="Private to your shop">
+      <textarea
+        className="input min-h-[180px] w-full leading-relaxed"
+        rows={8}
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        disabled={!canManage}
+        placeholder={`Notes about ${first} — gate codes, parking, product preferences, paint condition, anything worth remembering.`}
+      />
+      {canManage && (
+        <div className="mt-3 flex items-center justify-end gap-2">
+          {dirty && <button onClick={() => setVal(initialNotes)} className="text-[12.5px] font-semibold text-ink3 hover:text-ink">Discard</button>}
+          <Button variant="primary" onClick={save} disabled={!dirty || busy}>{busy ? "Saving…" : "Save note"}</Button>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function GroupLabel({ children }: { children: React.ReactNode }) {
+  return <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.07em] text-ink3">{children}</div>;
+}
+
+function TabActionButton({ icon: Icon, label, onClick, solid }: {
+  icon: typeof Plus; label: string; onClick: () => void; solid?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[12.5px] font-semibold transition-colors active:scale-[0.97]",
+        solid ? "bg-brand-500 text-white shadow-glow hover:brightness-[1.06]" : "bg-brand-500/10 text-brand-500 hover:bg-brand-500/15"
+      )}
+    >
+      <Icon className="h-4 w-4" />{label}
+    </button>
+  );
 }
 
 /* --------------------------------------------------------- small parts */
@@ -574,75 +624,6 @@ function initials(name: string) {
   if (parts.length === 0) return "?";
   if (parts.length === 1) return parts[0].slice(0, 2);
   return (parts[0][0] + parts[parts.length - 1][0]);
-}
-
-/** An animated SVG health ring, brand→tone gradient. */
-function Ring({ value, tone }: { value: number; tone: Tone }) {
-  const r = 30;
-  const c = 2 * Math.PI * r;
-  const off = c * (1 - clamp(value, 0, 100) / 100);
-  const hex = TONE[tone].hex;
-  return (
-    <div className="relative h-[76px] w-[76px] flex-none">
-      <svg viewBox="0 0 76 76" className="h-full w-full -rotate-90">
-        <circle cx="38" cy="38" r={r} fill="none" strokeWidth="7" className="stroke-line2" />
-        <circle cx="38" cy="38" r={r} fill="none" strokeWidth="7" strokeLinecap="round"
-          stroke={hex} strokeDasharray={c} strokeDashoffset={off}
-          style={{ transition: "stroke-dashoffset 900ms cubic-bezier(0.22,1,0.36,1)" }} />
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="font-display text-[19px] font-bold leading-none tnum text-ink">{value}</span>
-        <span className="text-[9px] font-semibold uppercase tracking-[0.08em] text-ink3">/ 100</span>
-      </div>
-    </div>
-  );
-}
-
-// Literal solid fills (kept as literal strings so Tailwind generates them).
-const SOLID: Record<Tone, string> = {
-  green: "bg-success", blue: "bg-brand-500", purple: "bg-violet", orange: "bg-warning", red: "bg-danger",
-};
-
-function FactorBar({ label, value }: { label: string; value: number }) {
-  const v = clamp(Math.round(value), 0, 100);
-  const tone: Tone = v >= 66 ? "green" : v >= 33 ? "orange" : "red";
-  return (
-    <div className="flex items-center gap-3">
-      <span className="w-16 flex-none text-[11.5px] font-medium text-ink3">{label}</span>
-      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-line2">
-        <div className={cn("h-full rounded-full transition-[width] duration-700 ease-out", SOLID[tone])} style={{ width: `${v}%` }} />
-      </div>
-      <span className="w-8 flex-none text-right text-[11px] font-semibold tnum text-ink2">{v}</span>
-    </div>
-  );
-}
-
-function ProfileRow({ icon: Icon, label, value, muted }: { icon: typeof Gift; label: string; value: string; muted?: boolean }) {
-  return (
-    <div className="flex items-center gap-2.5">
-      <span className="flex h-7 w-7 flex-none items-center justify-center rounded-lg bg-panel2 text-ink3"><Icon className="h-3.5 w-3.5" /></span>
-      <span className="text-[12px] text-ink3">{label}</span>
-      <span className={cn("ml-auto truncate text-[12.5px] font-semibold", muted ? "text-ink3" : "text-ink")}>{value}</span>
-    </div>
-  );
-}
-
-function RecoRow({ name, note, tone, onBook }: { name: string; note: string; tone: Tone; onBook?: () => void }) {
-  return (
-    <div className="flex items-center gap-3 rounded-xl bg-panel2/50 px-3 py-2.5 ring-1 ring-inset ring-line/60">
-      <span className={cn("flex h-7 w-7 flex-none items-center justify-center rounded-lg", TONE[tone].bubble)}><Wrench className="h-3.5 w-3.5" /></span>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[13px] font-semibold text-ink">{name}</div>
-        <div className="truncate text-[11px] text-ink3">{note}</div>
-      </div>
-      {onBook && (
-        <button onClick={onBook} aria-label={`Book ${name}`}
-          className="flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-brand-500/10 text-brand-500 transition-colors hover:bg-brand-500/15">
-          <ArrowUpRight className="h-4 w-4" />
-        </button>
-      )}
-    </div>
-  );
 }
 
 function InvoiceBadge({ status }: { status: string }) {
@@ -657,67 +638,144 @@ function InvoiceBadge({ status }: { status: string }) {
   return <span className={cn("hidden flex-none whitespace-nowrap rounded-full px-2 py-0.5 text-[10.5px] font-semibold sm:inline", map[status] ?? "bg-line2 text-ink3")}>{label}</span>;
 }
 
-function HeaderFact({ icon: Icon, label, value, hint, tone }: {
-  icon: typeof Phone; label: string; value: string; hint?: string; tone?: string;
+/** A quick action. Renders as a link for tel:/sms:/mailto:, a button otherwise.
+ *  Disabled (not hidden) when the customer has no phone/email, so the row's
+ *  shape stays stable and it's obvious what's missing. */
+/** A bare icon-circle action (iOS action-bar style). Link for tel:/sms:/mailto:,
+ *  button otherwise; dimmed + inert when the contact detail is missing. */
+function ActionCircle({ icon: Icon, label, href, onClick }: {
+  icon: LucideIcon; label: string; href?: string; onClick?: () => void;
+}) {
+  const enabled = Boolean(href || onClick);
+  const cls = cn(
+    "flex h-10 w-10 items-center justify-center rounded-full ring-1 ring-inset transition-[transform,background-color,color,box-shadow,border-color] duration-150 ease-out",
+    enabled
+      ? "bg-panel text-ink2 ring-line hover:-translate-y-0.5 hover:bg-panel2 hover:text-brand-500 hover:ring-brand-500/40 hover:shadow-card active:scale-95"
+      : "cursor-not-allowed bg-panel/60 text-ink3/40 ring-line"
+  );
+  const icon = <Icon className="h-[18px] w-[18px]" />;
+  if (href) return <a href={href} aria-label={label} title={label} className={cls}>{icon}</a>;
+  if (onClick) return <button type="button" onClick={onClick} aria-label={label} title={label} className={cls}>{icon}</button>;
+  return <span aria-disabled aria-label={label} title={`No ${label.toLowerCase()} on file`} className={cls}>{icon}</span>;
+}
+
+/** The #2 element in the hierarchy: a calm status card that turns green only
+ *  when there's actually an upcoming visit. */
+function NextAppointmentCard({ upcoming, canManage, onBook }: {
+  upcoming: { scheduled_at: string; service?: { name: string } | null } | null; canManage: boolean; onBook: () => void;
 }) {
   return (
-    <div className="flex items-start gap-2.5">
-      <span className="mt-0.5 flex h-7 w-7 flex-none items-center justify-center rounded-lg bg-panel2 text-ink3">
-        <Icon className="h-3.5 w-3.5" />
+    <motion.div
+      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, delay: 0.05, ease: [0.22, 1, 0.36, 1] }}
+      className={cn("surface mt-4 flex items-center gap-4 rounded-2xl p-4 sm:p-5", upcoming && "ring-1 ring-inset ring-success/25")}
+    >
+      <span className={cn("flex h-11 w-11 flex-none items-center justify-center rounded-xl", upcoming ? "bg-success/12 text-success" : "bg-line2 text-ink3")}>
+        <CalendarClock className="h-5 w-5" />
       </span>
-      <div className="min-w-0">
-        <div className="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-ink3">{label}</div>
-        <div className={cn("mt-0.5 truncate text-[13px] font-semibold text-ink", tone)}>{value}</div>
-        {hint && <div className="text-[11px] text-ink3">{hint}</div>}
+      <div className="min-w-0 flex-1">
+        {upcoming ? (
+          <>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-semibold text-success ring-1 ring-inset ring-success/20">
+              <span className="h-1.5 w-1.5 rounded-full bg-success" /> Upcoming appointment
+            </span>
+            <div className="mt-1.5 truncate text-[15px] font-bold text-ink">
+              {fmtDate(upcoming.scheduled_at)}{upcoming.service?.name ? ` · ${upcoming.service.name}` : ""}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="text-[13.5px] font-semibold text-ink2">No upcoming appointment</div>
+            <div className="mt-0.5 text-[12px] text-ink3">Book their next detail to keep the rhythm going.</div>
+          </>
+        )}
       </div>
+      {!upcoming && canManage && (
+        <button onClick={onBook} className="inline-flex h-9 flex-none items-center gap-1.5 rounded-lg bg-brand-500/10 px-3 text-[12.5px] font-semibold text-brand-500 transition-colors hover:bg-brand-500/15 active:scale-[0.97]">
+          <Plus className="h-4 w-4" /> Book
+        </button>
+      )}
+    </motion.div>
+  );
+}
+
+/** Lifetime stats in one card — small icon+label on top, big value below,
+ *  hairline dividers. Numbers count up on open. */
+function StatsRow({ vehicles, details, spent, last, daysSince }: {
+  vehicles: number; details: number; spent: number; last: string | null; daysSince: number | null;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
+      className="surface mt-4 overflow-hidden rounded-2xl"
+    >
+      <div className="grid grid-cols-2 divide-x divide-y divide-line sm:grid-cols-4 sm:divide-y-0">
+        <StatCell icon={Car} label="Vehicles"><CountUp value={vehicles} /></StatCell>
+        <StatCell icon={Wrench} label="Details"><CountUp value={details} /></StatCell>
+        <StatCell icon={DollarSign} label="Spent"><CountUp value={spent} format={moneyShort} /></StatCell>
+        <StatCell icon={Clock} label="Last visit">{relDay(daysSince, last)}</StatCell>
+      </div>
+    </motion.div>
+  );
+}
+
+function StatCell({ icon: Icon, label, children }: { icon: LucideIcon; label: string; children: React.ReactNode }) {
+  return (
+    <div className="p-4 sm:p-5">
+      <div className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.06em] text-ink3">
+        <Icon className="h-3.5 w-3.5" />{label}
+      </div>
+      <div className="mt-2 truncate font-display text-[20px] font-bold leading-none tracking-tight tnum text-ink sm:text-[22px]">{children}</div>
     </div>
   );
 }
 
-/** A quick action. Renders as a link for tel:/sms:/mailto:, a button otherwise.
- *  Disabled (not hidden) when the customer has no phone/email, so the row's
- *  shape stays stable and it's obvious what's missing. */
-function QuickAction({ icon: Icon, label, href, onClick, primary }: {
-  icon: typeof Phone; label: string; href?: string; onClick?: () => void; primary?: boolean;
-}) {
-  const cls = cn(
-    "inline-flex min-h-[40px] items-center gap-1.5 rounded-lg px-3 py-2 text-[12.5px] font-semibold transition-colors active:scale-[0.97]",
-    primary
-      ? "bg-brand-500 text-white shadow-glow hover:brightness-[1.06]"
-      : "bg-panel2 text-ink2 ring-1 ring-inset ring-line hover:bg-line2 hover:text-ink"
-  );
-  if (href) return <a href={href} className={cls}><Icon className="h-4 w-4" />{label}</a>;
-  if (onClick) return <button onClick={onClick} className={cls}><Icon className="h-4 w-4" />{label}</button>;
+/** A compact health ring — the score in a tone-coloured dial. */
+function HealthRing({ score, tone }: { score: number | null; tone: Tone }) {
+  const r = 22; const c = 2 * Math.PI * r;
+  const off = c * (1 - Math.max(0, Math.min(100, score ?? 0)) / 100);
   return (
-    <span className={cn(cls, "cursor-not-allowed opacity-45")} title={`No ${label.toLowerCase()} on file`}>
-      <Icon className="h-4 w-4" />{label}
-    </span>
+    <div className="relative h-14 w-14 flex-none">
+      <svg viewBox="0 0 56 56" className="h-full w-full -rotate-90">
+        <circle cx="28" cy="28" r={r} fill="none" strokeWidth="5" className="stroke-line2" />
+        <circle cx="28" cy="28" r={r} fill="none" strokeWidth="5" strokeLinecap="round"
+          stroke={TONE_HEX[tone]} strokeDasharray={c} strokeDashoffset={off}
+          style={{ transition: "stroke-dashoffset 900ms cubic-bezier(0.22,1,0.36,1)" }} />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center font-display text-[15px] font-bold tnum text-ink">{score ?? "–"}</div>
+    </div>
   );
 }
 
-function StatCard({ icon: Icon, tone, label, value, sub }: {
-  icon: typeof DollarSign; tone: Tone; label: string; value: string; sub: string;
-}) {
+/** Supporting insights — a health dial with a one-line summary beside it. */
+function InsightsCard({ health, avgTicket, favorite, cadence, visits }: Insights) {
   return (
-    <div className="surface rounded-2xl p-4 transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-lift">
-      <div className="flex items-center gap-2">
-        <span className={cn("flex h-7 w-7 flex-none items-center justify-center rounded-lg", TONE[tone].bubble)}>
-          <Icon className="h-3.5 w-3.5" />
-        </span>
-        <span className="truncate text-[10.5px] font-semibold uppercase tracking-[0.06em] text-ink3">{label}</span>
+    <div className="surface rounded-2xl p-5 sm:p-6">
+      <div className="flex items-center gap-4">
+        <HealthRing score={health.score} tone={health.tone} />
+        <div className="min-w-0">
+          <div className={cn("flex items-center gap-1.5 text-[14.5px] font-bold tracking-tight", TONE_TEXT[health.tone])}>
+            <Gauge className="h-4 w-4" /> Health · {health.label}
+          </div>
+          <div className="mt-1 text-[12.5px] leading-relaxed text-ink3">
+            {visits ? <>Avg ticket <b className="font-semibold text-ink2">{money(avgTicket)}</b></> : "No visits yet"}
+            {favorite && <> · Books <b className="font-semibold text-ink2">{favorite}</b></>}
+            {cadence ? <> · every <b className="font-semibold text-ink2">{cadence}d</b></> : null}
+          </div>
+        </div>
       </div>
-      <div className="mt-2.5 truncate font-display text-[20px] font-bold leading-none tracking-tight tnum text-ink">{value}</div>
-      <div className="mt-1.5 truncate text-[11px] text-ink3">{sub}</div>
     </div>
   );
 }
 
 /** One chronological stream merged from jobs, invoices and photos. */
-function ActivityTimeline({ createdAt, appointments, invoices, photos }: {
+function ActivityTimeline({ createdAt, appointments, invoices, photos, limit }: {
   createdAt: string;
   appointments: { id: string; scheduled_at: string; status: AppointmentStatus; price: number | null; service?: { name: string } | null }[];
   invoices: { id: string; number: string | null; status: string; total: number; issued_at: string; created_at: string }[];
   photos: JobPhoto[];
+  limit?: number;
 }) {
   type Ev = { at: string; icon: typeof Wrench; tone: Tone; title: string; meta?: string };
   const events: Ev[] = [];
@@ -742,11 +800,12 @@ function ActivityTimeline({ createdAt, appointments, invoices, photos }: {
       meta: money(i.total),
     });
   }
-  for (const p of photos) {
-    events.push({ at: p.created_at, icon: ImageIcon, tone: "purple", title: "Photo uploaded", meta: p.caption ?? undefined });
+  for (const ph of photos) {
+    events.push({ at: ph.created_at, icon: ImageIcon, tone: "purple", title: "Photo uploaded", meta: ph.caption ?? undefined });
   }
 
   const sorted = events.sort((a, b) => b.at.localeCompare(a.at));
+  const shown = limit ? sorted.slice(0, limit) : sorted;
 
   if (sorted.length <= 1) {
     return <Empty art="chart" title="Nothing has happened yet" body="Book this customer in and their whole history builds here automatically." />;
@@ -754,7 +813,7 @@ function ActivityTimeline({ createdAt, appointments, invoices, photos }: {
 
   return (
     <ol className="relative ml-1 border-l border-line">
-      {sorted.map((e, i) => (
+      {shown.map((e, i) => (
         <li key={i} className="relative flex items-start gap-3 py-3 pl-6">
           <span className={cn("absolute -left-[13px] flex h-6 w-6 items-center justify-center rounded-full ring-4 ring-panel", TONE[e.tone].bubble)}>
             <e.icon className="h-3 w-3" />
@@ -778,7 +837,7 @@ function BackLink() {
   );
 }
 
-/** A borderless section: heading (+ optional subtitle / right-aligned action), then content. */
+/** A section card: heading (+ optional subtitle / right-aligned action), then content. */
 function Panel({ title, subtitle, action, className, children }: {
   title: string; subtitle?: string; action?: React.ReactNode; className?: string; children: React.ReactNode;
 }) {

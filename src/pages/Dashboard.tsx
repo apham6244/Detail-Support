@@ -1282,60 +1282,75 @@ function NeedsAttention({
 
   if (items.length === 0) return null;
 
-  const TONE: Record<Tone, { bubble: string; ring: string; bar: string; btn: string }> = {
-    danger:  { bubble: "bg-danger/12 text-danger",       ring: "ring-danger/25",    bar: "bg-danger",    btn: "bg-danger text-white" },
-    warning: { bubble: "bg-warning/12 text-warning",     ring: "ring-warning/25",   bar: "bg-warning",   btn: "bg-warning text-white" },
-    brand:   { bubble: "bg-brand-500/12 text-brand-500", ring: "ring-brand-500/25", bar: "bg-brand-500", btn: "bg-brand-500 text-white" },
-    violet:  { bubble: "bg-violet/12 text-violet",       ring: "ring-violet/25",    bar: "bg-violet",    btn: "bg-violet text-white" },
+  // Subtle, single-accent styling: semantic colour lives only in the small icon
+  // chip and the priority dot — never in full-card borders or buttons (which read
+  // as a template/admin panel). The action itself is carried by one brand-blue
+  // CTA, emphasised for High-priority and quiet for Medium.
+  const ICON: Record<Tone, string> = {
+    danger:  "bg-danger/10 text-danger",
+    warning: "bg-warning/10 text-warning",
+    brand:   "bg-brand-500/10 text-brand-500",
+    violet:  "bg-violet/10 text-violet",
   };
-  const PRIORITY: Record<"High" | "Medium", string> = {
-    High:   "bg-danger/12 text-danger ring-danger/25",
-    Medium: "bg-warning/12 text-warning ring-warning/25",
+  const DOT: Record<"High" | "Medium", string> = {
+    High:   "bg-danger",
+    Medium: "bg-warning",
   };
 
   return (
     <div className="mt-5">
-      <div className="mb-2.5 flex items-center gap-2">
-        <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-warning/12 text-warning">
-          <BellRing className="h-3.5 w-3.5" />
-        </span>
-        <h2 className="font-display text-[15px] font-bold tracking-tight text-ink">Needs attention</h2>
-        <span className="text-[12px] text-ink3">· {items.length}</span>
+      <div className="mb-3 flex items-end justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <h2 className="font-display text-[15px] font-bold tracking-tight text-ink">Needs attention</h2>
+          <span className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-ink/[0.06] px-1.5 text-[11px] font-semibold tabular-nums text-ink2">
+            {items.length}
+          </span>
+        </div>
+        <span className="hidden text-[11.5px] text-ink3 sm:inline">Sorted by priority</span>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="flex flex-col gap-2">
         {items.map((it, i) => {
-          const t = TONE[it.tone];
+          const isHigh = it.priority === "High";
           return (
             <motion.div
               key={it.title}
-              initial={{ opacity: 0, y: 8 }}
+              initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.32, delay: i * 0.05, ease: [0.22, 1, 0.36, 1] }}
-              className={cn("surface relative flex h-full flex-col overflow-hidden rounded-2xl p-3.5 pl-4 ring-1 ring-inset", t.ring)}
+              transition={{ duration: 0.3, delay: i * 0.05, ease: [0.22, 1, 0.36, 1] }}
             >
-              {/* priority accent rail */}
-              <span aria-hidden className={cn("absolute inset-y-0 left-0 w-1", t.bar)} />
-              <div className="flex items-center gap-2">
-                <span className={cn("flex h-8 w-8 flex-none items-center justify-center rounded-xl", t.bubble)}>
-                  <it.icon className="h-[17px] w-[17px]" />
+              <Link
+                to={it.to}
+                aria-label={`${it.cta}: ${it.title}`}
+                className="group surface flex items-center gap-3 rounded-xl p-2.5 pr-2.5 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-px hover:border-brand-500/30 hover:shadow-lift active:translate-y-0 sm:pr-3"
+              >
+                <span className={cn("flex h-10 w-10 flex-none items-center justify-center rounded-xl", ICON[it.tone])}>
+                  <it.icon className="h-[18px] w-[18px]" />
                 </span>
-                <span className={cn("ml-auto inline-flex items-center rounded-full px-2 py-0.5 text-[9.5px] font-bold uppercase tracking-[0.05em] ring-1 ring-inset", PRIORITY[it.priority])}>
-                  {it.priority}
+
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-[13.5px] font-semibold tracking-tight text-ink">{it.title}</span>
+                    <span className="ml-auto flex flex-none items-center gap-1 pl-1 text-[10px] font-semibold uppercase tracking-wide text-ink3">
+                      <span aria-hidden className={cn("h-1.5 w-1.5 rounded-full", DOT[it.priority])} />
+                      {it.priority}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 truncate text-[12px] leading-relaxed text-ink3">{it.desc}</p>
+                </div>
+
+                <span
+                  className={cn(
+                    "ml-1 inline-flex h-8 flex-none items-center gap-1.5 rounded-lg px-3 text-[12px] font-semibold transition-[background-color,color,border-color] duration-150",
+                    isHigh
+                      ? "bg-brand-500 text-white shadow-sm group-hover:bg-brand-600"
+                      : "border border-line bg-panel2 text-ink2 group-hover:border-brand-500/40 group-hover:text-ink"
+                  )}
+                >
+                  <span className="hidden sm:inline">{it.cta}</span>
+                  <ArrowRight className="h-3.5 w-3.5 transition-transform duration-150 group-hover:translate-x-0.5" />
                 </span>
-              </div>
-              <div className="mt-2.5 flex-1">
-                <div className="text-[13.5px] font-bold tracking-tight text-ink">{it.title}</div>
-                <p className="mt-1 text-[11.5px] leading-relaxed text-ink3">{it.desc}</p>
-              </div>
-              <div className="mt-3 flex items-center gap-2">
-                <Link to={it.to} className={cn("inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg px-3 text-[12px] font-semibold shadow-sm transition-[transform,filter] duration-150 hover:brightness-[1.06] active:scale-[0.98]", t.btn)}>
-                  {it.cta}
-                </Link>
-                <Link to={it.to} className="inline-flex h-8 flex-none items-center rounded-lg px-2.5 text-[12px] font-semibold text-ink3 transition-colors hover:bg-line2 hover:text-ink">
-                  View
-                </Link>
-              </div>
+              </Link>
             </motion.div>
           );
         })}

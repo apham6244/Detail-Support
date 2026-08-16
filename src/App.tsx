@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { AppLayout } from "./components/layout/AppLayout";
 import { DSIcon } from "./components/brand/Logo";
+import { PwaPrompts } from "./components/pwa/PwaPrompts";
 import { useAuth } from "./lib/auth";
 import { isDemo, startDemo } from "./lib/demo";
 
@@ -87,7 +88,9 @@ function RequireAuth() {
 
 export default function App() {
   return (
-    <Suspense fallback={<Splash />}>
+    <>
+      <PwaPrompts />
+      <Suspense fallback={<Splash />}>
       <Routes>
         {/* Public */}
         <Route path="/welcome" element={<Welcome />} />
@@ -129,6 +132,7 @@ export default function App() {
 
         <Route path="*" element={<Navigate to="/welcome" replace />} />
       </Routes>
-    </Suspense>
+      </Suspense>
+    </>
   );
 }

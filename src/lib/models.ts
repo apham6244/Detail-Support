@@ -92,12 +92,16 @@ export interface Invoice {
   id: string;
   number: string | null;
   customer_id: string;
+  /** Ships in migration 029, so optional on un-migrated databases. */
+  vehicle_id?: string | null;
   status: InvoiceStatus;
   subtotal: number;
   tax: number;
   total: number;
   deposit_amount: number;
   notes: string | null;
+  /** Private staff-only note — ships in migration 029. */
+  internal_notes?: string | null;
   issued_at: string;
   /** Payment due date (nullable in the DB; used to derive "overdue"). */
   due_at?: string | null;
@@ -208,6 +212,9 @@ export interface Quote {
   tax: number;
   total: number;
   notes: string | null;
+  /** Private staff-only note — ships in migration 028, so optional on
+   *  un-migrated databases (a `select("*")` simply omits it). */
+  internal_notes?: string | null;
   valid_until: string | null;
   sent_at: string | null;
   accepted_at: string | null;
