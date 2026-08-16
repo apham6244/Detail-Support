@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import {
   Plus,
@@ -45,6 +46,13 @@ import {
   type QuoteLineItem,
 } from "@/lib/models";
 import { cn } from "@/lib/cn";
+
+/** One-thing-at-a-time quote wizard — same slide pattern as Add Service / Book Job. */
+const QUOTE_STEPS = ["Customer", "Line items", "Pricing", "Review"] as const;
+const stepSlide = {
+  enter: (d: number) => ({ opacity: 0, x: d >= 0 ? 32 : -32 }),
+  center: { opacity: 1, x: 0 },
+};
 
 const STATUS_STYLE: Record<QuoteStatus, string> = {
   draft: "text-ink2 bg-line2",
@@ -97,6 +105,8 @@ export default function Quotes() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tried, setTried] = useState(false);
+  const [step, setStep] = useState(0);
+  const [dir, setDir] = useState(1);
 
   const { vehicles } = useVehicles(customerId || null);
 
@@ -163,6 +173,8 @@ export default function Quotes() {
     setInternalNotes("");
     setError(null);
     setTried(false);
+    setStep(0);
+    setDir(1);
   };
 
   const openNew = () => {
@@ -191,6 +203,8 @@ export default function Quotes() {
     setInternalNotes(q.internal_notes ?? "");
     setError(null);
     setTried(false);
+    setStep(0);
+    setDir(1);
     setDetailId(null);
     setFormOpen(true);
   };
@@ -247,6 +261,16 @@ export default function Quotes() {
       setBusy(false);
     }
   };
+
+  // Wizard: per-step validity + slide navigation (all input is preserved).
+  const quoteStepValid = [
+    Boolean(customerId),
+    !problems.lines && !problems.qty && !problems.price,
+    !problems.discount && !problems.expires,
+    true,
+  ];
+  const gotoQuote = (n: number, d: number) => { setDir(d); setStep(Math.max(0, Math.min(QUOTE_STEPS.length - 1, n))); };
+  const nextQuote = () => { if (quoteStepValid[step]) gotoQuote(step + 1, 1); };
 
   return (
     <div className="animate-fade-up">
@@ -341,28 +365,48 @@ export default function Quotes() {
         icon={<ReceiptText />}
         title={editingId ? "Edit quote" : "New quote"}
         subtitle={editingId ? "Update this estimate for your customer" : "Create a professional quote for your customer"}
-        footer={
-          editingId ? (
-            <>
-              <Button onClick={() => setFormOpen(false)}>Cancel</Button>
-              <Button variant="primary" onClick={() => submit(false)} disabled={busy}
-                icon={busy ? <Loader2 className="animate-spin" /> : undefined}>
-                {busy ? "Saving…" : "Save changes"}
-              </Button>
-            </>
+        footer={<>
+          {step === 0
+            ? <Button onClick={() => setFormOpen(false)}>Cancel</Button>
+            : <Button onClick={() => gotoQuote(step - 1, -1)} disabled={busy}>Back</Button>}
+          {step < QUOTE_STEPS.length - 1 ? (
+            <Button variant="primary" onClick={nextQuote} disabled={!quoteStepValid[step]}>Continue</Button>
+          ) : editingId ? (
+            <Button variant="primary" onClick={() => submit(false)} disabled={busy}
+              icon={busy ? <Loader2 className="animate-spin" /> : undefined}>
+              {busy ? "Saving…" : "Save changes"}
+            </Button>
           ) : (
             <>
-              <Button onClick={() => setFormOpen(false)}>Cancel</Button>
               <Button onClick={() => submit(false)} disabled={busy}>Save draft</Button>
               <Button variant="primary" onClick={() => submit(true)} disabled={busy}
                 icon={busy ? <Loader2 className="animate-spin" /> : <Send />}>
                 {busy ? "Working…" : "Create & send"}
               </Button>
             </>
-          )
-        }
+          )}
+        </>}
       >
         <div className="flex flex-col gap-5">
+          {/* Progress — ● ━ ● ━ ○ ━ ○ + "Step N of 4" */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              {QUOTE_STEPS.map((_, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  <span className={cn("h-2 w-2 flex-none rounded-full transition-colors", i <= step ? "bg-brand-500" : "bg-line2")} />
+                  {i < QUOTE_STEPS.length - 1 && <span className={cn("h-px w-4 flex-none transition-colors", i < step ? "bg-brand-500/50" : "bg-line")} />}
+                </div>
+              ))}
+            </div>
+            <span className="text-[11.5px] font-semibold text-ink3">Step {step + 1} of {QUOTE_STEPS.length}</span>
+          </div>
+
+          {/* Sliding step content — min-height keeps the modal from jumping */}
+          <div className="min-h-[280px]">
+            <motion.div key={step} custom={dir} variants={stepSlide} initial="enter" animate="center"
+              transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }} className="flex flex-col gap-5">
+
+          {step === 0 && (<>
           {/* Customer + vehicle */}
           <div className="flex flex-col gap-3">
             <div className="grid gap-4 sm:grid-cols-2">
@@ -436,7 +480,9 @@ export default function Quotes() {
               </div>
             )}
           </div>
+          </>)}
 
+          {step === 1 && (<>
           {/* Line items — the hero section */}
           <div>
             <div className="mb-2.5 flex items-center gap-2">
@@ -500,7 +546,9 @@ export default function Quotes() {
             </div>
             {tried && problems.lines && <p className="mt-2 text-[11.5px] text-danger">Add at least one line with a description and a quantity above 0.</p>}
           </div>
+          </>)}
 
+          {step === 2 && (<>
           {/* Adjustments */}
           <div>
             <div className="mb-2.5 flex items-center gap-2">
@@ -562,6 +610,32 @@ export default function Quotes() {
               <span className="font-display text-[26px] font-bold leading-none tnum text-ink">{money(total)}</span>
             </div>
           </div>
+          </>)}
+
+          {step === 3 && (<>
+          {/* Review — a compact summary before creating the quote */}
+          <div className="rounded-xl border border-line bg-panel2/40 p-3.5 text-[13px]">
+            <div className="flex flex-col gap-2">
+              {([
+                ["Customer", selectedCustomer?.name ?? "—"],
+                ["Vehicle", selectedVehicle ? vehicleLabel(selectedVehicle) : "None"],
+                ["Line items", `${validLines.length} item${validLines.length === 1 ? "" : "s"}`],
+                ["Subtotal", money(subtotal)],
+                ...(discountAmount > 0 ? [["Discount", `− ${money(discountAmount)}`] as [string, string]] : []),
+                ...(taxAmount > 0 ? [[`${taxLabel}${taxRateNum ? ` (${taxRateNum}%)` : ""}`, money(taxAmount)] as [string, string]] : []),
+                ["Expires", validUntil ? fmtDate(validUntil) : "—"],
+              ] as [string, string][]).map(([l, v]) => (
+                <div key={l} className="flex items-baseline justify-between gap-3">
+                  <span className="flex-none text-ink3">{l}</span>
+                  <span className="min-w-0 truncate text-right font-medium text-ink">{v}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2.5 flex items-center justify-between border-t border-line pt-2.5">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-ink2">Total</span>
+              <span className="font-display text-[19px] font-bold tnum text-ink">{money(total)}</span>
+            </div>
+          </div>
 
           <FieldBlock label="Customer note" icon={<StickyNote />} hint="Shown on the quote">
             <textarea className="input" rows={2} placeholder="Add details about what's included, preparation instructions, or terms…" value={notes} onChange={(e) => setNotes(e.target.value)} />
@@ -570,6 +644,10 @@ export default function Quotes() {
           <FieldBlock label="Internal note" icon={<Lock />} hint="Staff only · never shown to customer">
             <textarea className="input" rows={2} placeholder="Private reference — pricing rationale, prep reminders, upsell ideas…" value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} />
           </FieldBlock>
+          </>)}
+
+            </motion.div>
+          </div>
 
           {error && <div className="rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
         </div>
