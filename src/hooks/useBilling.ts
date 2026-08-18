@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { isDemo } from "@/lib/demo";
 
 export interface BillingConfig {
   /** Stripe can actually charge a card on this server. */
@@ -37,6 +38,14 @@ export function useBilling() {
 
   /** Returns the freshly-read subscription so callers can poll on it. */
   const load = useCallback(async (): Promise<StripeSubscription | null> => {
+    if (isDemo()) {
+      // Read-only preview: no API/DB calls. Billing runs on the manual switcher.
+      setConfig({ configured: false, testMode: true, purchasable: {} });
+      setSub(null);
+      setApiReachable(false);
+      setLoading(false);
+      return null;
+    }
     if (!org) {
       setConfig(null);
       setSub(null);

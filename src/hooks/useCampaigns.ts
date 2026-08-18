@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabase";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import type { Campaign } from "@/lib/models";
+import { isDemo, demoGuard } from "@/lib/demo";
 
 export interface SendResult {
   channel: "email" | "sms";
@@ -27,6 +28,10 @@ export function useCampaigns() {
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
+    if (isDemo()) {
+      setCampaigns([]); // read-only preview makes no DB calls
+      return;
+    }
     if (!supabase || !org) {
       setCampaigns([]);
       return;
@@ -42,6 +47,7 @@ export function useCampaigns() {
   }, [load]);
 
   const create = async (input: CampaignInput) => {
+    demoGuard();
     if (!supabase || !org) throw new Error("Sign in first.");
     const { data, error } = await supabase
       .from("marketing_campaigns")

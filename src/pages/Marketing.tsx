@@ -18,6 +18,7 @@ import { useCustomers } from "@/hooks/useCustomers";
 import { useAppointments } from "@/hooks/useAppointments";
 import { segmentLabel, customersInSegment, reachable, toCsv, type SegmentKey } from "@/lib/segments";
 import { CAMPAIGN_STATUS_LABEL, type Campaign } from "@/lib/models";
+import { isDemo } from "@/lib/demo";
 import { cn } from "@/lib/cn";
 
 const fmtDate = (iso: string | null) =>
@@ -45,6 +46,8 @@ export default function Marketing() {
   // Ask the server what's actually wired, so the page never over-promises.
   useEffect(() => {
     let on = true;
+    // Demo makes zero external calls (no JWT to authenticate with anyway).
+    if (isDemo()) return;
     apiFetch<Delivery>("/notify/status")
       .then((d) => on && setDelivery(d))
       .catch(() => on && setDelivery(null));

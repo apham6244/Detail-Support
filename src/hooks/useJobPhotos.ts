@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 import type { JobPhoto } from "@/lib/models";
+import { isDemo, demoGuard } from "@/lib/demo";
 
 const BUCKET = "job-photos";
 
@@ -15,6 +16,10 @@ export function useJobPhotos(customerId: string | null) {
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
+    if (isDemo()) {
+      setPhotos([]); // read-only preview makes no DB/storage calls
+      return;
+    }
     if (!supabase || !org || !customerId) {
       setPhotos([]);
       return;
@@ -47,6 +52,7 @@ export function useJobPhotos(customerId: string | null) {
     file: File,
     opts: { vehicleId?: string | null; appointmentId?: string | null; caption?: string | null } = {}
   ) => {
+    demoGuard();
     if (!supabase || !org || !customerId) throw new Error("Sign in first.");
     if (!file.type.startsWith("image/")) throw new Error("Only image files can be uploaded.");
     if (file.size > 10 * 1024 * 1024) throw new Error("That image is over the 10 MB limit.");

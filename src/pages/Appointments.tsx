@@ -45,6 +45,13 @@ const statusDot: Record<AppointmentStatus, string> = {
   scheduled: "bg-brand-500", confirmed: "bg-violet", in_progress: "bg-warning",
   completed: "bg-success", cancelled: "bg-ink3", no_show: "bg-danger",
 };
+/* Status is the ONE semantic colour on a card — a left accent bar (same status
+   palette as the pill), so a column scans by status without extra colours. */
+const statusBar: Record<AppointmentStatus, string> = {
+  scheduled: "border-l-brand-500", confirmed: "border-l-violet", in_progress: "border-l-warning",
+  completed: "border-l-success", cancelled: "border-l-ink3", no_show: "border-l-danger",
+};
+const fmtHours = (h: number) => `${h % 1 ? h.toFixed(1) : h}h`;
 
 /* Consistent service colour system — a light tint + coloured left border + a
    subtle tinted icon per service type. Never a solid-colour card. */
@@ -208,13 +215,45 @@ export default function Appointments() {
   const whenValid = !Number.isNaN(new Date(when).getTime());
   const selectedService = svcById.get(serviceId);
 
-  // Compact "today" workload for the header stat row (real today, not the cursor).
-  const todayStats = useMemo(() => {
-    const list = (byDay.get(key(new Date())) ?? []).filter((a) => a.status !== "cancelled" && a.status !== "no_show");
-    const bookedH = list.reduce((s, a) => s + (a.duration_min ?? 60), 0) / 60;
-    const revenue = list.reduce((s, a) => s + (a.price ?? 0), 0);
-    return { jobs: list.length, bookedH, openH: Math.max(0, 10 - bookedH), revenue };
-  }, [byDay]);
+  // The metric row always matches the CURRENT view's date scope (day/week/month
+  // /list) — never a hardcoded "today" while a week is on screen.
+  const scope = useMemo(() => {
+    const CAP = 10; // ~10 working hours a day → "available" capacity
+    if (view === "day") {
+      const d = key(cursor);
+      return { inRange: (iso: string) => key(iso) === d, capacityH: CAP, fourth: "avail" as const,
+        labels: { jobs: "Today's jobs", booked: "Booked hours", fourth: "Available hours", revenue: "Revenue today" } };
+    }
+    if (view === "week") {
+      const s = startOfWeek(cursor).getTime(); const e = s + 7 * DAY;
+      return { inRange: (iso: string) => { const t = new Date(iso).getTime(); return t >= s && t < e; }, capacityH: CAP * 7, fourth: "avail" as const,
+        labels: { jobs: "Jobs this week", booked: "Booked hours", fourth: "Available hours", revenue: "Revenue this week" } };
+    }
+    if (view === "month") {
+      const s = new Date(cursor.getFullYear(), cursor.getMonth(), 1).getTime();
+      const e = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1).getTime();
+      const days = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0).getDate();
+      return { inRange: (iso: string) => { const t = new Date(iso).getTime(); return t >= s && t < e; }, capacityH: CAP * days, fourth: "avail" as const,
+        labels: { jobs: "Jobs this month", booked: "Booked hours", fourth: "Available hours", revenue: "Revenue this month" } };
+    }
+    // list — everything upcoming; capacity isn't meaningful over an open range,
+    // so the 4th card becomes "Completed" instead of available hours.
+    const startToday = new Date(); startToday.setHours(0, 0, 0, 0);
+    return { inRange: (iso: string) => new Date(iso).getTime() >= startToday.getTime(), capacityH: 0, fourth: "completed" as const,
+      labels: { jobs: "Upcoming jobs", booked: "Booked hours", fourth: "Completed", revenue: "Upcoming revenue" } };
+  }, [view, cursor]);
+
+  const scopeStats = useMemo(() => {
+    const active = appointments.filter((a) => scope.inRange(a.scheduled_at) && a.status !== "cancelled" && a.status !== "no_show");
+    const bookedH = active.reduce((s, a) => s + (a.duration_min ?? 60), 0) / 60;
+    return {
+      jobs: active.length,
+      bookedH,
+      revenue: active.reduce((s, a) => s + (a.price ?? 0), 0),
+      completed: active.filter((a) => a.status === "completed").length,
+      availH: Math.max(0, scope.capacityH - bookedH),
+    };
+  }, [appointments, scope]);
 
   // Double-booking guard: the first active appointment whose time window overlaps
   // the one being booked/edited. Non-blocking — a shop with two bays can override.
@@ -334,12 +373,13 @@ export default function Appointments() {
         actions={isManager ? <Button variant="primary" icon={<Plus />} onClick={() => openNew()}>Book job</Button> : undefined}
       />
 
-      {/* Today at a glance */}
+      {/* At a glance — always scoped to the view (day / week / month / list) */}
       <div className="mb-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4 sm:gap-3">
-        <StatCard icon={CalendarCheck} tone="blue" label="Today's jobs" value={String(todayStats.jobs)} />
-        <StatCard icon={Hourglass} tone="purple" label="Booked hours" value={`${todayStats.bookedH % 1 ? todayStats.bookedH.toFixed(1) : todayStats.bookedH}h`} />
-        <StatCard icon={Clock} tone="green" label="Open hours" value={`${todayStats.openH % 1 ? todayStats.openH.toFixed(1) : todayStats.openH}h`} />
-        <StatCard icon={DollarSign} tone="orange" label="Revenue today" value={money(todayStats.revenue)} />
+        <StatCard icon={CalendarCheck} tone="blue" label={scope.labels.jobs} value={String(scopeStats.jobs)} />
+        <StatCard icon={Hourglass} tone="purple" label={scope.labels.booked} value={fmtHours(scopeStats.bookedH)} />
+        <StatCard icon={scope.fourth === "completed" ? CalendarCheck : Clock} tone="green" label={scope.labels.fourth}
+          value={scope.fourth === "completed" ? String(scopeStats.completed) : (scopeStats.availH <= 0 ? "Full" : fmtHours(scopeStats.availH))} />
+        <StatCard icon={DollarSign} tone="orange" label={scope.labels.revenue} value={money(scopeStats.revenue)} />
       </div>
 
       {/* Controls — wrap on mobile */}
@@ -365,8 +405,8 @@ export default function Appointments() {
       {loading ? <PageSkeleton variant="calendar" header={false} /> : (
         <>
           {view === "month" && <MonthView cursor={cursor} byDay={byDay} onDay={(d) => { setCursor(d); setView("day"); }} onPick={setDetail} />}
-          {view === "week" && <WeekView cursor={cursor} byDay={byDay} onPick={setDetail} onEdit={isManager ? openEdit : undefined} onDuplicate={isManager ? openDuplicate : undefined} onAdd={isManager ? openNew : undefined} custById={custById} />}
-          {view === "day" && <DayView cursor={cursor} byDay={byDay} onPick={setDetail} onAdd={isManager ? openNew : undefined} />}
+          {view === "week" && <WeekView cursor={cursor} byDay={byDay} onPick={setDetail} onEdit={isManager ? openEdit : undefined} onDuplicate={isManager ? openDuplicate : undefined} onAdd={isManager ? openNew : undefined} custById={custById} byId={byId} />}
+          {view === "day" && <DayView cursor={cursor} byDay={byDay} onPick={setDetail} onAdd={isManager ? openNew : undefined} byId={byId} />}
           {view === "list" && (
             appointments.length === 0 ? (
               <EmptyState art="garage"
@@ -687,9 +727,11 @@ function MonthView({ cursor, byDay, onDay, onPick }: {
         {days.map((d) => {
           const list = byDay.get(key(d)) ?? [];
           const outside = d.getMonth() !== cursor.getMonth();
+          // A div (not a button) so the per-appointment Chip buttons nest legally.
           return (
-            <button key={key(d)} onClick={() => onDay(d)}
-              className={cn("min-h-[74px] border-b border-r border-line2 p-1 text-left align-top last:border-r-0 sm:min-h-[104px]",
+            <div key={key(d)} role="button" tabIndex={0} onClick={() => onDay(d)}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onDay(d); } }}
+              className={cn("min-h-[74px] cursor-pointer border-b border-r border-line2 p-1 text-left align-top outline-none last:border-r-0 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500/40 sm:min-h-[104px]",
                 outside && "bg-panel2/40", "hover:bg-brand-500/[0.04]")}>
               <div className={cn("mb-0.5 flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold",
                 sameDay(d, today) ? "bg-brand-500 text-white" : outside ? "text-ink3" : "text-ink")}>
@@ -703,7 +745,7 @@ function MonthView({ cursor, byDay, onDay, onPick }: {
               <div className="flex flex-wrap gap-0.5 sm:hidden">
                 {list.slice(0, 4).map((a) => <span key={a.id} className={cn("h-1.5 w-1.5 rounded-full", statusDot[a.status])} />)}
               </div>
-            </button>
+            </div>
           );
         })}
       </div>
@@ -713,15 +755,14 @@ function MonthView({ cursor, byDay, onDay, onPick }: {
 
 type CustLite = { name: string; phone?: string | null; address?: string | null };
 
-function WeekView({ cursor, byDay, onPick, onEdit, onDuplicate, onAdd, custById }: {
+function WeekView({ cursor, byDay, onPick, onEdit, onDuplicate, onAdd, custById, byId }: {
   cursor: Date; byDay: Map<string, Appointment[]>;
   onPick: (a: Appointment) => void; onEdit?: (a: Appointment) => void; onDuplicate?: (a: Appointment) => void;
-  onAdd?: (d: Date) => void; custById: Map<string, CustLite>;
+  onAdd?: (d: Date) => void; custById: Map<string, CustLite>; byId: Map<string, { name: string }>;
 }) {
   const s = startOfWeek(cursor);
   const days = Array.from({ length: 7 }, (_, i) => new Date(s.getTime() + i * DAY));
   const now = new Date();
-  const nowLabel = time(now.toISOString());
   return (
     <div className="grid overflow-hidden rounded-xl border border-line max-sm:divide-y max-sm:divide-line sm:grid-cols-7 sm:divide-x sm:divide-line">
       {days.map((d) => {
@@ -730,32 +771,26 @@ function WeekView({ cursor, byDay, onPick, onEdit, onDuplicate, onAdd, custById 
         return (
           <div key={key(d)}
             onClick={onAdd ? () => onAdd(new Date(d)) : undefined}
-            className={cn("flex min-h-[150px] flex-col p-2.5 sm:min-h-[220px]", isToday && "bg-brand-500/[0.03]", onAdd && "cursor-pointer")}>
-            {/* Day header — weekday, date, workload */}
-            <div className="mb-2 px-0.5">
-              <div className={cn("text-[10.5px] font-semibold uppercase tracking-wide", isToday ? "text-brand-500" : "text-ink3")}>
-                {d.toLocaleDateString(undefined, { weekday: "short" })}
+            className={cn("flex min-h-[168px] flex-col p-2.5 sm:min-h-[200px]", isToday && "bg-brand-500/[0.04]", onAdd && "cursor-pointer")}>
+            {/* Day header — weekday, date, count, and a restrained Today marker */}
+            <div className="mb-2 flex items-start justify-between gap-1 px-0.5">
+              <div className="min-w-0">
+                <div className={cn("text-[10.5px] font-semibold uppercase tracking-wide", isToday ? "text-brand-500" : "text-ink3")}>
+                  {d.toLocaleDateString(undefined, { weekday: "short" })}
+                </div>
+                <div className="flex items-baseline gap-1.5">
+                  <span className={cn("text-[18px] font-bold leading-none tracking-tight", isToday && "text-brand-500")}>{d.getDate()}</span>
+                  {list.length > 0 && <span className="text-[11px] text-ink3">{list.length} job{list.length === 1 ? "" : "s"}</span>}
+                </div>
               </div>
-              <div className="flex items-baseline gap-1.5">
-                <span className={cn("text-[18px] font-bold leading-none tracking-tight", isToday && "text-brand-500")}>{d.getDate()}</span>
-                {list.length > 0 && <span className="text-[11px] text-ink3">{list.length} job{list.length === 1 ? "" : "s"}</span>}
-              </div>
+              {isToday && <span className="flex-none rounded-full bg-brand-500/12 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-brand-500">Today</span>}
             </div>
-
-            {/* Current-time marker on today */}
-            {isToday && (
-              <div className="mb-1.5 flex items-center gap-1.5" aria-label={`Current time ${nowLabel}`}>
-                <span className="h-1.5 w-1.5 flex-none rounded-full bg-danger" />
-                <span className="h-px flex-1 bg-danger/40" />
-                <span className="text-[9.5px] font-semibold tabular-nums text-danger">{nowLabel}</span>
-              </div>
-            )}
 
             {list.length === 0 ? (
               <button
                 onClick={onAdd ? (e) => { e.stopPropagation(); onAdd(new Date(d)); } : undefined}
                 disabled={!onAdd}
-                className="mt-0.5 flex flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed border-line2 py-5 text-center text-[11px] text-ink3 transition-colors hover:border-brand-500/40 hover:text-brand-500 disabled:cursor-default disabled:hover:border-line2 disabled:hover:text-ink3"
+                className="mt-0.5 flex flex-1 flex-col items-center justify-center gap-0.5 rounded-lg py-4 text-center text-[11px] text-ink3 transition-colors hover:text-brand-500 disabled:cursor-default disabled:hover:text-ink3"
               >
                 <span>No appointments</span>
                 {onAdd && <span className="font-semibold text-brand-500">Book one</span>}
@@ -763,7 +798,8 @@ function WeekView({ cursor, byDay, onPick, onEdit, onDuplicate, onAdd, custById 
             ) : (
               <div className="flex flex-col gap-1.5">
                 {list.map((a) => (
-                  <WeekCard key={a.id} a={a} onPick={onPick} onEdit={onEdit} onDuplicate={onDuplicate} cust={custById.get(a.customer_id)} />
+                  <WeekCard key={a.id} a={a} onPick={onPick} onEdit={onEdit} onDuplicate={onDuplicate} cust={custById.get(a.customer_id)}
+                    assignee={a.assigned_to ? byId.get(a.assigned_to)?.name ?? "Assigned" : null} />
                 ))}
               </div>
             )}
@@ -774,37 +810,54 @@ function WeekView({ cursor, byDay, onPick, onEdit, onDuplicate, onAdd, custById 
   );
 }
 
-function WeekCard({ a, onPick, onEdit, onDuplicate, cust }: {
+/** The ONE universal appointment card. Identical for every day and status:
+ *  a neutral card whose only accent is a status-coloured left bar. Hierarchy is
+ *  Time → Customer → Service → Vehicle → Assignee → Status (always shown). */
+function WeekCard({ a, onPick, onEdit, onDuplicate, cust, assignee }: {
   a: Appointment; onPick: (a: Appointment) => void; onEdit?: (a: Appointment) => void;
-  onDuplicate?: (a: Appointment) => void; cust?: CustLite;
+  onDuplicate?: (a: Appointment) => void; cust?: CustLite; assignee?: string | null;
 }) {
-  const t = SVC_TONE[serviceTone(a.service?.name)];
   const Svc = serviceIcon(a.service?.name);
+  const svcIcon = SVC_TONE[serviceTone(a.service?.name)].icon; // subtle service cue via icon colour only
   const open = () => onPick(a);
   return (
     <div
       role="button" tabIndex={0}
       onClick={(e) => { e.stopPropagation(); open(); }}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); open(); } }}
-      className={cn("group/card relative cursor-pointer rounded-lg border border-line border-l-[3px] p-2 outline-none transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:shadow-card focus-visible:ring-2 focus-visible:ring-brand-500/30", t.borderL, t.bg, t.hoverBorder)}
+      className={cn("group/card relative cursor-pointer rounded-lg border border-line border-l-[3px] bg-panel p-2 outline-none transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-card focus-visible:ring-2 focus-visible:ring-brand-500/30", statusBar[a.status])}
     >
-      <div className="flex items-center gap-1.5">
-        <span className={cn("h-1.5 w-1.5 flex-none rounded-full", statusDot[a.status])} />
-        <span className="truncate text-[12px] font-semibold text-ink">{a.customer?.name ?? "Customer"}</span>
+      {/* Time — strong + always scannable */}
+      <div className="text-[11.5px] font-bold tabular-nums tracking-tight text-ink">
+        {time(a.scheduled_at)} – {endTime(a.scheduled_at, a.duration_min)}
       </div>
+      {/* Customer */}
+      <div className="mt-0.5 truncate text-[12.5px] font-bold tracking-tight text-ink">{a.customer?.name ?? "Customer"}</div>
+      {/* Service */}
       {a.service?.name && (
-        <div className="mt-1.5">
-          <span className={cn("inline-flex max-w-full items-center gap-1 rounded-full px-2 py-0.5 text-[11.5px] font-medium", t.badge)}>
-            <Svc className="h-3 w-3 flex-none" />
+        <div className="mt-1">
+          <span className="inline-flex max-w-full items-center gap-1 rounded-md bg-ink/[0.05] px-1.5 py-0.5 text-[11px] font-medium text-ink2">
+            <Svc className={cn("h-3 w-3 flex-none", svcIcon)} />
             <span className="min-w-0 truncate">{a.service.name}</span>
           </span>
         </div>
       )}
-      {a.vehicle && <div className="mt-1.5 truncate text-[10.5px] text-ink3">{vehicleLabel(a.vehicle)}</div>}
-      <div className="mt-1 text-[10.5px] font-medium tabular-nums text-ink2">{time(a.scheduled_at)} – {endTime(a.scheduled_at, a.duration_min)}</div>
-      {a.status !== "scheduled" && (
-        <span className={cn("mt-1 inline-flex rounded px-1.5 py-0.5 text-[9.5px] font-semibold", statusStyle[a.status])}>{APPOINTMENT_STATUS_LABEL[a.status]}</span>
-      )}
+      {/* Vehicle */}
+      {a.vehicle && <div className="mt-1 truncate text-[10.5px] text-ink3">{vehicleLabel(a.vehicle)}</div>}
+      {/* Assignee + status — status is always present */}
+      <div className="mt-1.5 flex items-center gap-1.5">
+        {assignee ? (
+          <span className="flex min-w-0 items-center gap-1 text-[10.5px] text-ink3">
+            <span className="flex h-4 w-4 flex-none items-center justify-center rounded-full bg-brand-500/12 text-[8px] font-bold text-brand-500">{initials(assignee)}</span>
+            <span className="truncate">{assignee}</span>
+          </span>
+        ) : (
+          <span className="flex items-center gap-1 text-[10.5px] text-ink3/70"><UserRound className="h-3 w-3 flex-none" />Unassigned</span>
+        )}
+        <span className={cn("ml-auto flex-none whitespace-nowrap rounded-full px-1.5 py-0.5 text-[9.5px] font-semibold", statusStyle[a.status])}>
+          {APPOINTMENT_STATUS_LABEL[a.status]}
+        </span>
+      </div>
 
       {/* Quick actions — hidden until hover */}
       <div className="absolute right-1 top-1 hidden max-w-[calc(100%-8px)] flex-wrap items-center justify-end gap-0.5 rounded-md bg-panel/95 p-0.5 shadow-card ring-1 ring-inset ring-line group-hover/card:flex">
@@ -839,8 +892,9 @@ function StatCard({ icon: Icon, tone, label, value }: { icon: typeof Clock; tone
   );
 }
 
-function DayView({ cursor, byDay, onPick, onAdd }: {
+function DayView({ cursor, byDay, onPick, onAdd, byId }: {
   cursor: Date; byDay: Map<string, Appointment[]>; onPick: (a: Appointment) => void; onAdd?: (d: Date) => void;
+  byId: Map<string, { name: string }>;
 }) {
   const list = byDay.get(key(cursor)) ?? [];
   if (list.length === 0) {
@@ -852,22 +906,29 @@ function DayView({ cursor, byDay, onPick, onAdd }: {
   return (
     <div className="flex flex-col gap-2">
       {list.map((a) => {
-        const t = SVC_TONE[serviceTone(a.service?.name)];
         const Svc = serviceIcon(a.service?.name);
+        const svcIcon = SVC_TONE[serviceTone(a.service?.name)].icon;
+        const assignee = a.assigned_to ? byId.get(a.assigned_to)?.name ?? "Assigned" : null;
         return (
           <button key={a.id} onClick={() => onPick(a)}
-            className={cn("group flex w-full items-center gap-3 rounded-xl border border-line border-l-[3px] px-3 py-3 text-left transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:shadow-card", t.borderL, t.bg, t.hoverBorder)}>
+            className={cn("group flex w-full items-center gap-3 rounded-xl border border-line border-l-[3px] bg-panel px-3 py-3 text-left transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-card", statusBar[a.status])}>
             <div className="flex w-[74px] flex-none flex-col">
               <span className="text-[14px] font-bold leading-none tnum">{time(a.scheduled_at)}</span>
               <span className="mt-1 text-[10.5px] tnum text-ink3">{endTime(a.scheduled_at, a.duration_min)}</span>
             </div>
             <div className="min-w-0 flex-1">
-              <div className="truncate text-[13.5px] font-semibold">{a.customer?.name ?? "Customer"}</div>
-              <div className="mt-1 flex items-center gap-2 text-xs">
-                <span className={cn("inline-flex flex-none items-center gap-1 rounded-full px-2 py-0.5 text-[11.5px] font-medium", t.badge)}>
-                  <Svc className="h-3 w-3 flex-none" />{a.service?.name ?? "Service"}
+              <div className="truncate text-[13.5px] font-bold">{a.customer?.name ?? "Customer"}</div>
+              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                <span className="inline-flex flex-none items-center gap-1 rounded-full bg-ink/[0.05] px-2 py-0.5 text-[11.5px] font-medium text-ink2">
+                  <Svc className={cn("h-3 w-3 flex-none", svcIcon)} />{a.service?.name ?? "Service"}
                 </span>
                 {a.vehicle && <span className="truncate text-ink3">{vehicleLabel(a.vehicle)}</span>}
+                {assignee && (
+                  <span className="flex items-center gap-1 text-ink3">
+                    <span className="flex h-4 w-4 flex-none items-center justify-center rounded-full bg-brand-500/12 text-[8px] font-bold text-brand-500">{initials(assignee)}</span>
+                    {assignee}
+                  </span>
+                )}
               </div>
             </div>
             <span className="hidden tnum text-[13px] font-semibold sm:block">{money(a.price)}</span>

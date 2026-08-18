@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   ChevronLeft, ChevronRight, ChevronDown, Plus, CheckCircle2, UserRound,
-  CalendarDays, Users, Wrench, CircleDot, Lightbulb, ArrowRight,
+  CalendarDays, Users, Wrench, CircleDot, Lightbulb, ArrowRight, DollarSign,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
@@ -85,7 +85,6 @@ function initials(name?: string | null) {
 }
 
 const isCompleted = (s: AppointmentStatus) => s === "completed";
-const isPending = (s: AppointmentStatus) => s === "scheduled" || s === "confirmed" || s === "in_progress";
 
 export default function Schedule() {
   const { appointments, loading, ready, setStatus } = useAppointments();
@@ -143,14 +142,16 @@ export default function Schedule() {
 
   const summary = useMemo(() => {
     const appts = filtered.filter((a) => dayKey(a.scheduled_at) === selectedDay);
-    const completed = appts.filter((a) => isCompleted(a.status));
-    const revenue = completed.reduce((s, a) => s + (a.price ?? 0), 0);
+    const active = appts.filter((a) => a.status !== "cancelled");
     return {
       jobs: appts.length,
-      completed: completed.length,
-      pending: appts.filter((a) => isPending(a.status)).length,
-      revenue,
-      avg: completed.length ? revenue / completed.length : 0,
+      completed: appts.filter((a) => isCompleted(a.status)).length,
+      inProgress: appts.filter((a) => a.status === "in_progress").length,
+      upcoming: appts.filter((a) => a.status === "scheduled" || a.status === "confirmed").length,
+      // Booked value for the day (every non-cancelled job's price), not just what's collected.
+      scheduledRevenue: active.reduce((s, a) => s + (a.price ?? 0), 0),
+      unassigned: active.filter((a) => !a.assigned_to).length,
+      crew: new Set(active.filter((a) => a.assigned_to).map((a) => a.assigned_to)).size,
     };
   }, [filtered, selectedDay]);
 
@@ -189,9 +190,10 @@ export default function Schedule() {
     );
   }
 
-  const monthLabel = `${MONTHS[month.getMonth()]} 1 – ${MONTHS[month.getMonth()]} ${new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate()}, ${month.getFullYear()}`;
+  const totalMonthJobs = days.reduce((s, d) => s + d.appts.length, 0);
   const shiftMonth = (n: number) => setMonth((m) => new Date(m.getFullYear(), m.getMonth() + n, 1));
   const goToday = () => { setMonth(new Date(today.getFullYear(), today.getMonth(), 1)); setSelectedDay(ymd(today)); };
+  const todayKey = ymd(today);
 
   return (
     <div className="animate-fade-up">
@@ -199,28 +201,24 @@ export default function Schedule() {
         title="Schedule"
         subtitle={isManager ? "Your team's jobs, day by day" : "Your assigned jobs"}
         actions={
-          <div className="flex items-center gap-2">
-            {isManager && (
-              <label className="relative">
-                <span className="sr-only">Filter by member</span>
-                <select value={memberFilter} onChange={(e) => setMemberFilter(e.target.value)} className="input h-[38px] w-auto pr-8 text-[13px]">
-                  <option value="all">All members</option>
-                  <option value="unassigned">Unassigned</option>
-                  {members.map((m) => <option key={m.user_id} value={m.user_id}>{m.name}</option>)}
-                </select>
-              </label>
-            )}
-            {isManager && (
-              <Button variant="primary" onClick={() => navigate("/appointments")}>
-                <Plus className="h-4 w-4" /> New Job
-              </Button>
-            )}
-          </div>
+          isManager ? (
+            <Button variant="primary" onClick={() => navigate("/appointments")}>
+              <Plus className="h-4 w-4" /> New Job
+            </Button>
+          ) : undefined
         }
       />
 
-      {/* Date navigation */}
-      <div className="mb-5 flex flex-wrap items-center gap-3">
+      {/* Month header — intentional, compact; the month leads, controls sit right */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-baseline gap-2.5">
+          <h2 className="font-display text-[18px] font-bold tracking-tight text-ink">
+            {month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
+          </h2>
+          <span className="rounded-full bg-line2 px-2 py-0.5 text-[11.5px] font-semibold text-ink3">
+            {totalMonthJobs} job{totalMonthJobs === 1 ? "" : "s"}
+          </span>
+        </div>
         <div className="flex items-center gap-1 rounded-xl border border-line bg-panel p-1">
           <button onClick={() => shiftMonth(-1)} aria-label="Previous month" className="flex h-8 w-8 items-center justify-center rounded-lg text-ink2 transition-colors hover:bg-line2 hover:text-ink active:scale-90">
             <ChevronLeft className="h-4 w-4" />
@@ -229,9 +227,6 @@ export default function Schedule() {
           <button onClick={() => shiftMonth(1)} aria-label="Next month" className="flex h-8 w-8 items-center justify-center rounded-lg text-ink2 transition-colors hover:bg-line2 hover:text-ink active:scale-90">
             <ChevronRight className="h-4 w-4" />
           </button>
-        </div>
-        <div className="flex items-center gap-2 text-[14px] font-semibold text-ink">
-          <CalendarDays className="h-4 w-4 text-ink3" /> {monthLabel}
         </div>
       </div>
 
@@ -281,11 +276,24 @@ export default function Schedule() {
 
                     {open && (
                       <div className="border-t border-line">
-                        {day.appts.map((a) => (
-                          <JobRow key={a.id} appt={a} allDone={allDone}
-                            assigneeName={a.assigned_to ? byId.get(a.assigned_to)?.name : null}
-                            onStatus={setStatus} />
-                        ))}
+                        {(() => {
+                          const isTodayGroup = day.key === todayKey;
+                          const nowMs = Date.now();
+                          const out: React.ReactNode[] = [];
+                          let placed = false;
+                          for (const a of day.appts) {
+                            if (isTodayGroup && !placed && new Date(a.scheduled_at).getTime() > nowMs) {
+                              out.push(<NowLine key="now" />);
+                              placed = true;
+                            }
+                            out.push(
+                              <JobRow key={a.id} appt={a} allDone={allDone}
+                                assigneeName={a.assigned_to ? byId.get(a.assigned_to)?.name : null}
+                                onStatus={setStatus} />
+                            );
+                          }
+                          return out;
+                        })()}
                       </div>
                     )}
                   </div>
@@ -346,18 +354,21 @@ export default function Schedule() {
             </div>
           </div>
 
-          {/* Day summary */}
+          {/* Day summary — the day at a glance, then the money + crew details */}
           <div className="surface rounded-2xl p-4">
             <div className="mb-3 flex items-baseline justify-between gap-2">
               <h3 className="text-[14px] font-bold tracking-tight text-ink">Day summary</h3>
-              <span className="truncate text-[12px] text-ink3">{new Date(selectedDay + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}</span>
+              <span className="truncate text-[12px] text-ink3">{new Date(selectedDay + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span>
             </div>
-            <div className="flex flex-col divide-y divide-line2">
-              <SummaryRow icon={CalendarDays} tone="text-ink3" label="Jobs" value={String(summary.jobs)} />
-              <SummaryRow icon={CheckCircle2} tone="text-success" label="Completed" value={String(summary.completed)} />
-              <SummaryRow icon={CircleDot} tone="text-warning" label="Pending" value={String(summary.pending)} />
-              <SummaryRow icon={CalendarDays} tone="text-brand-500" label="Revenue" value={money(summary.revenue)} />
-              <SummaryRow icon={CalendarDays} tone="text-ink3" label="Avg ticket" value={summary.completed ? money(summary.avg) : "—"} />
+            <div className="grid grid-cols-2 gap-2">
+              <StatBlock label="Jobs" value={summary.jobs} />
+              <StatBlock label="Completed" value={summary.completed} tone="text-success" />
+              <StatBlock label="In progress" value={summary.inProgress} tone="text-warning" />
+              <StatBlock label="Upcoming" value={summary.upcoming} tone="text-brand-500" />
+            </div>
+            <div className="mt-3 flex flex-col divide-y divide-line2 border-t border-line2 pt-1">
+              <SummaryRow icon={DollarSign} tone="text-success" label="Scheduled revenue" value={money(summary.scheduledRevenue)} />
+              {isManager && <SummaryRow icon={UserRound} tone={summary.unassigned ? "text-warning" : "text-ink3"} label="Unassigned" value={String(summary.unassigned)} />}
             </div>
           </div>
 
@@ -389,7 +400,12 @@ function JobRow({ appt, allDone, assigneeName, onStatus }: {
   const tone = serviceTone(appt.service?.name);
   const { hm, ap } = fmtTimeParts(appt.scheduled_at);
   const custHref = appt.customer_id ? `/customers/${appt.customer_id}` : null;
-  const nameNode = <span className="truncate text-[14px] font-bold tracking-tight text-ink transition-colors group-hover/name:text-brand-500">{appt.customer?.name ?? "Customer"}</span>;
+  const svcName = appt.service?.name;
+  const custName = appt.customer?.name ?? "Customer";
+  const vehicle = appt.vehicle ? vehicleLabel(appt.vehicle) : null;
+  // The service is the job — make it the scannable title. Customer + vehicle
+  // support it. With no service on the record, the customer becomes the title.
+  const title = svcName ?? custName;
 
   return (
     <motion.div
@@ -408,21 +424,20 @@ function JobRow({ appt, allDone, assigneeName, onStatus }: {
         <span aria-hidden className={cn("absolute left-1/2 top-[22px] h-2.5 w-2.5 -translate-x-1/2 rounded-full ring-4 ring-panel", SVC[tone].dot)} />
       </div>
 
-      {/* Center */}
+      {/* Center — service is the scannable title; customer · vehicle supports it */}
       <div className="flex min-w-0 flex-1 items-center gap-3 py-3.5">
         <span className={cn("flex h-9 w-9 flex-none items-center justify-center rounded-full text-[12px] font-bold", SVC[tone].avatar)}>
           {initials(appt.customer?.name)}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            {custHref ? <Link to={custHref} className="group/name min-w-0">{nameNode}</Link> : nameNode}
-            {appt.service?.name && (
-              <span className={cn("inline-flex flex-none items-center rounded-md px-2 py-0.5 text-[11px] font-semibold", SVC[tone].badge)}>
-                {appt.service.name}
-              </span>
-            )}
+          <div className="truncate text-[14px] font-bold tracking-tight text-ink">{title}</div>
+          <div className="mt-0.5 flex items-center gap-1.5 text-[12.5px] leading-tight">
+            {svcName && (custHref
+              ? <Link to={custHref} className="min-w-0 truncate font-semibold text-ink2 transition-colors hover:text-brand-500">{custName}</Link>
+              : <span className="min-w-0 truncate font-semibold text-ink2">{custName}</span>)}
+            {svcName && vehicle && <span aria-hidden className="flex-none text-line2">·</span>}
+            {vehicle && <span className="min-w-0 truncate text-ink3">{vehicle}</span>}
           </div>
-          {appt.vehicle && <div className="mt-0.5 truncate text-[12px] text-ink3">{vehicleLabel(appt.vehicle)}</div>}
         </div>
       </div>
 
@@ -448,6 +463,26 @@ function JobRow({ appt, allDone, assigneeName, onStatus }: {
         </select>
       </div>
     </motion.div>
+  );
+}
+
+/* Subtle "now" marker — sits on today's timeline, before the next job. */
+function NowLine() {
+  const { hm, ap } = fmtTimeParts(new Date().toISOString());
+  return (
+    <div className="flex items-stretch gap-3 px-4 sm:gap-4 sm:px-5">
+      <div className="flex w-[52px] flex-none items-center justify-end sm:w-[58px]">
+        <span className="text-[10px] font-extrabold uppercase tracking-wide text-brand-500">Now</span>
+      </div>
+      <div className="relative flex-none" style={{ width: 12 }}>
+        <span aria-hidden className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-line2" />
+        <span aria-hidden className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-brand-500 ring-4 ring-panel" />
+      </div>
+      <div className="flex flex-1 items-center gap-2 py-1.5">
+        <span aria-hidden className="h-px flex-1 bg-gradient-to-r from-brand-500/50 to-transparent" />
+        <span className="flex-none text-[10.5px] font-semibold tnum text-brand-500">{hm} {ap}</span>
+      </div>
+    </div>
   );
 }
 
@@ -478,11 +513,12 @@ function MiniCalendar({ month, today, selectedDay, jobDots, onPick }: {
               className="relative mx-auto flex h-9 w-9 flex-col items-center justify-center rounded-lg text-[12.5px] transition-colors">
               <span className={cn(
                 "flex h-7 w-7 items-center justify-center rounded-full tnum transition-colors",
-                isToday ? "bg-brand-500 font-bold text-white"
-                  : isSel ? "font-bold text-brand-500 ring-1 ring-inset ring-brand-500/40"
-                    : "font-medium text-ink2 hover:bg-line2"
+                isToday ? "bg-brand-500 font-bold text-white shadow-sm"
+                  : isSel ? "bg-brand-500/10 font-bold text-brand-600 ring-1 ring-inset ring-brand-500/40"
+                    : hasJobs ? "font-semibold text-ink hover:bg-line2"
+                      : "font-medium text-ink3 hover:bg-line2"
               )}>{n}</span>
-              {hasJobs && <span className={cn("absolute bottom-0.5 h-1 w-1 rounded-full", isToday ? "bg-brand-500" : "bg-brand-500/60")} />}
+              {hasJobs && <span className={cn("absolute bottom-0.5 h-1 w-1 rounded-full", isToday ? "bg-white" : "bg-brand-500")} />}
             </button>
           );
         })}
@@ -512,6 +548,16 @@ function SummaryRow({ icon: Icon, tone, label, value }: { icon: typeof CalendarD
       <Icon className={cn("h-4 w-4 flex-none", tone)} />
       <span className="text-[13px] text-ink2">{label}</span>
       <span className="ml-auto text-[13px] font-semibold tabular-nums text-ink">{value}</span>
+    </div>
+  );
+}
+
+/* Compact at-a-glance stat block for the day summary — small, not a KPI card. */
+function StatBlock({ label, value, tone }: { label: string; value: number; tone?: string }) {
+  return (
+    <div className="rounded-xl bg-panel2/50 px-3 py-2.5 ring-1 ring-inset ring-line/50">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-ink3">{label}</div>
+      <div className={cn("mt-0.5 font-display text-[18px] font-bold leading-none tnum", tone ?? "text-ink")}>{value}</div>
     </div>
   );
 }

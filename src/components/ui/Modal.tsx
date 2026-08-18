@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { type ReactNode, useEffect, useId, useRef } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { X } from "lucide-react";
@@ -25,6 +25,63 @@ export function Modal({
   /** Desktop max-width. "md" (default) = max-w-lg; "lg" = max-w-xl; "xl" = max-w-2xl. */
   size?: "md" | "lg" | "xl";
 }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  // Keep the latest onClose without re-running the open effect (callers usually
+  // pass a fresh arrow each render), so focus capture/restore stays stable.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  // Dialog a11y: Escape to close, focus trap, autofocus in, restore focus out.
+  // Listens in the BUBBLE phase so inner widgets (e.g. Combobox) that consume
+  // Escape/Tab first (via stopPropagation) close themselves without closing us.
+  useEffect(() => {
+    if (!open) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const panel = panelRef.current;
+    const focusable = () =>
+      panel
+        ? [...panel.querySelectorAll<HTMLElement>(
+            'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])',
+          )].filter((el) => el.getClientRects().length > 0)
+        : [];
+    // Move focus into the dialog (first field, else the panel itself).
+    (focusable()[0] ?? panel)?.focus();
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onCloseRef.current();
+      } else if (e.key === "Tab") {
+        const f = focusable();
+        if (f.length === 0) {
+          e.preventDefault();
+          panel?.focus();
+          return;
+        }
+        const first = f[0];
+        const last = f[f.length - 1];
+        const active = document.activeElement as HTMLElement | null;
+        const outside = !panel?.contains(active);
+        // Wrap at the ends, and also reclaim focus if it has fallen outside the
+        // panel (e.g. onto <body> after a wizard step re-render) so Tab can never
+        // walk out of the dialog into the page behind it.
+        if (e.shiftKey && (active === first || outside)) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && (active === last || outside)) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      previouslyFocused?.focus?.();
+    };
+  }, [open]);
+
   // Only mount while open. We deliberately skip AnimatePresence's deferred exit:
   // combined with the body portal, its delayed unmount races with React removing
   // the portal node and throws "removeChild" on close / route change. Mounting
@@ -47,6 +104,11 @@ export function Modal({
         onClick={onClose}
       />
       <motion.div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
         initial={{ opacity: 0, y: 24, scale: 0.99 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
@@ -64,7 +126,7 @@ export function Modal({
             </span>
           )}
           <div className="min-w-0 flex-1">
-            <h3 className="text-[15px] font-semibold leading-tight">{title}</h3>
+            <h3 id={titleId} className="text-[15px] font-semibold leading-tight">{title}</h3>
             {subtitle && <p className="mt-0.5 text-[12.5px] leading-snug text-ink3">{subtitle}</p>}
           </div>
           <button

@@ -3,10 +3,10 @@ import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ResponsiveContainer, AreaChart, Area } from "recharts";
 import {
-  Plus, Search, Car, ChevronRight, Phone, Mail, Wrench, DollarSign,
+  Plus, Search, Car, ChevronRight, Phone, Mail, DollarSign,
   Clock, Crown, Sparkles, Users, CalendarCheck, CalendarPlus, Receipt,
-  UserRound, SlidersHorizontal, TrendingUp, TrendingDown,
-  LayoutGrid, List, Gauge, type LucideIcon,
+  SlidersHorizontal, TrendingUp, TrendingDown,
+  LayoutGrid, List, type LucideIcon,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
@@ -40,7 +40,8 @@ type Enriched = {
   upcoming: number;
   isVip: boolean;
   isNew: boolean;
-  isActive: boolean;
+  isActive: boolean;        // has an upcoming booking (drives badges/health)
+  activeThisMonth: boolean; // had any appointment this calendar month
   needsFollowup: boolean;
   isInactive: boolean;
   lastActivity: number;  // sort key (ms)
@@ -71,8 +72,6 @@ function whenLabel(iso: string | null): string {
 }
 const shortDate = (iso: string) =>
   new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-const monthYear = (iso: string) =>
-  new Date(iso).toLocaleDateString(undefined, { month: "short", year: "numeric" });
 
 function moneyShort(n: number): string {
   if (!n) return "$0";
@@ -81,15 +80,16 @@ function moneyShort(n: number): string {
   return `$${Math.round(n)}`;
 }
 
+// Actionable filters first. "Upcoming" = has a future booking; "Active" = seen
+// this calendar month (matches the hero's "Active this month"). They are distinct
+// on purpose. isNew/isInactive still drive card badges but aren't standalone pills.
 const SEGMENTS = [
-  { key: "all", label: "All customers", match: (_: Enriched) => true },
-  { key: "vip", label: "VIP", match: (e: Enriched) => e.isVip },
-  { key: "active", label: "Active", match: (e: Enriched) => e.isActive },
-  { key: "upcoming", label: "Upcoming appt", match: (e: Enriched) => e.upcoming > 0 },
-  { key: "highvalue", label: "High value", match: (e: Enriched) => e.spent >= 500 },
+  { key: "all", label: "All", match: (_: Enriched) => true },
   { key: "followup", label: "Needs follow-up", match: (e: Enriched) => e.needsFollowup },
-  { key: "inactive", label: "Inactive", match: (e: Enriched) => e.isInactive },
-  { key: "new", label: "New", match: (e: Enriched) => e.isNew },
+  { key: "upcoming", label: "Upcoming", match: (e: Enriched) => e.upcoming > 0 },
+  { key: "vip", label: "VIP", match: (e: Enriched) => e.isVip },
+  { key: "highvalue", label: "High value", match: (e: Enriched) => e.spent >= 500 },
+  { key: "active", label: "Active", match: (e: Enriched) => e.activeThisMonth },
 ] as const;
 type SegKey = (typeof SEGMENTS)[number]["key"];
 
@@ -133,6 +133,9 @@ export default function Customers() {
     }
 
     const now = Date.now();
+    const nowD = new Date();
+    const monthStartMs = new Date(nowD.getFullYear(), nowD.getMonth(), 1).getTime();
+    const nextMonthMs = new Date(nowD.getFullYear(), nowD.getMonth() + 1, 1).getTime();
     return customers.map((c) => {
       const appts = apptsByCustomer.get(c.id) ?? [];
       const completed = appts.filter((a) => a.status === "completed");
@@ -161,6 +164,10 @@ export default function Customers() {
       const isVip = spent >= 1000 || completed.length >= 5;
       const isNew = daysSince(c.created_at) <= 30 && completed.length === 0;
       const isActive = future.length > 0;
+      const activeThisMonth = appts.some((a) => {
+        const t = new Date(a.scheduled_at).getTime();
+        return t >= monthStartMs && t < nextMonthMs;
+      });
       const needsFollowup =
         completed.length > 0 && !isActive && quiet !== null && quiet >= 60 && quiet < 180;
       const isInactive = completed.length > 0 && !isActive && quiet !== null && quiet >= 180;
@@ -203,7 +210,7 @@ export default function Customers() {
         favoriteService: best > 1 ? favoriteService : null,
         nextAppt: future[0] ? { at: future[0].scheduled_at, service: future[0].service?.name ?? null } : null,
         upcoming: future.length,
-        isVip, isNew, isActive, needsFollowup, isInactive, lastActivity, health, estNextDays,
+        isVip, isNew, isActive, activeThisMonth, needsFollowup, isInactive, lastActivity, health, estNextDays,
       };
     });
   }, [customers, appointments, invoices]);
@@ -213,6 +220,8 @@ export default function Customers() {
       clients: enriched.length,
       vips: enriched.filter((e) => e.isVip).length,
       followups: enriched.filter((e) => e.needsFollowup).length,
+      // Same definition the "Active" filter uses, so the two never disagree.
+      activeThisMonth: enriched.filter((e) => e.activeThisMonth).length,
       revenue: enriched.reduce((s, e) => s + e.spent, 0),
     }),
     [enriched]
@@ -231,10 +240,6 @@ export default function Customers() {
       custSeries.push({ value: customers.filter((c) => new Date(c.created_at) >= d && new Date(c.created_at) < n).length });
       revSeries.push({ value: invoices.reduce((s, i) => { const t = new Date(i.issued_at || i.created_at); return t >= d && t < n ? s + collected(i) : s; }, 0) });
     }
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-    const activeThisMonth = new Set(
-      appointments.filter((a) => new Date(a.scheduled_at).getTime() >= monthStart).map((a) => a.customer_id)
-    ).size;
     const delta = (s: { value: number }[]) => {
       const cur = s[5]?.value ?? 0, prev = s[4]?.value ?? 0;
       return prev > 0 ? ((cur - prev) / prev) * 100 : cur > 0 ? 100 : 0;
@@ -244,9 +249,8 @@ export default function Customers() {
       newThisMonth: custSeries[5].value, newLastMonth: custSeries[4].value,
       revThisMonth: revSeries[5].value, revLastMonth: revSeries[4].value,
       custDelta: delta(custSeries), revDelta: delta(revSeries),
-      activeThisMonth,
     };
-  }, [customers, invoices, appointments]);
+  }, [customers, invoices]);
 
   // Only surface segment chips that actually have members (keeps it relevant, not noisy).
   const segCounts = useMemo(() => {
@@ -317,23 +321,23 @@ export default function Customers() {
             <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-br from-brand-500/[0.10] via-transparent to-violet/[0.08]" />
             <div aria-hidden className="pointer-events-none absolute -right-16 -top-20 h-64 w-64 rounded-full bg-brand-500/12 blur-[90px]" />
             <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-paint-gloss opacity-30" />
-            <div className="relative flex flex-col gap-5 p-5 sm:p-7 lg:flex-row lg:items-center lg:justify-between">
+            <div className="relative flex flex-col gap-4 p-4 sm:p-5 lg:flex-row lg:items-center lg:justify-between">
               <div className="min-w-0">
-                <h1 className="font-display text-[30px] font-extrabold leading-none tracking-tight text-ink sm:text-[36px]">Customers</h1>
-                <p className="mt-2 max-w-md text-[13.5px] leading-relaxed text-ink3">
-                  Every client you detail — their vehicles, spend and history, with the relationships that need attention surfaced automatically.
+                <h1 className="font-display text-[23px] font-extrabold leading-none tracking-tight text-ink sm:text-[27px]">Customers</h1>
+                <p className="mt-1.5 max-w-md text-[12.5px] leading-snug text-ink3">
+                  Your clients — vehicles, spend, and history, with the ones needing attention surfaced automatically.
                 </p>
-                <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2.5">
+                <div className="mt-3.5 flex flex-wrap items-center gap-x-5 gap-y-2">
                   <HeroFact label="Total clients" value={String(totals.clients)} />
-                  <HeroFact label="Active this month" value={String(trends.activeThisMonth)} />
+                  <HeroFact label="Active this month" value={String(totals.activeThisMonth)} />
                   <HeroFact label="New this month" value={`+${trends.newThisMonth}`} tone="text-success" />
                   <HeroFact label="Lifetime revenue" value={money(Math.round(totals.revenue))} />
                 </div>
               </div>
               {canManage && (
                 <button onClick={openNew}
-                  className="group inline-flex flex-none items-center justify-center gap-2 self-start rounded-2xl bg-gradient-to-br from-brand-500 to-brand-600 px-6 py-3.5 text-[15px] font-semibold text-white shadow-glow transition-[transform,box-shadow,filter] duration-150 hover:brightness-[1.06] hover:shadow-glow-lg active:scale-[0.98] lg:self-center">
-                  <Plus className="h-[18px] w-[18px] transition-transform duration-150 group-hover:rotate-90" />
+                  className="group inline-flex flex-none items-center justify-center gap-2 self-start rounded-xl bg-gradient-to-br from-brand-500 to-brand-600 px-5 py-2.5 text-[14px] font-semibold text-white shadow-glow transition-[transform,box-shadow,filter] duration-150 hover:brightness-[1.06] hover:shadow-glow-lg active:scale-[0.98] lg:self-center">
+                  <Plus className="h-[17px] w-[17px] transition-transform duration-150 group-hover:rotate-90" />
                   Add customer
                 </button>
               )}
@@ -341,17 +345,17 @@ export default function Customers() {
           </section>
 
           {/* ---- KPI cards with sparklines ------------------------------ */}
-          <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className="mt-3.5 grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Kpi tone="success" icon={DollarSign} label="Lifetime revenue" value={money(Math.round(totals.revenue))}
               delta={trends.revDelta} deltaNote={`${money(Math.round(trends.revThisMonth))} this month`} series={trends.revSeries} />
             <Kpi tone="brand" icon={Users} label="New customers" value={String(trends.newThisMonth)}
               delta={trends.custDelta} deltaNote={`vs ${trends.newLastMonth} last month`} series={trends.custSeries} />
             <SummaryKpi icon={Crown} tone="violet" label="VIP clients" value={totals.vips} note="≥ $1k or 5+ details" />
-            <SummaryKpi icon={Clock} tone="amber" label="Need follow-up" value={totals.followups} note="Quiet 60–180 days" />
+            <SummaryKpi icon={Clock} tone="amber" label="Needs follow-up" value={totals.followups} note="Quiet 60–180 days" />
           </div>
 
           {/* Search · sort · view · filters */}
-          <div className="mt-5 flex flex-wrap items-center gap-2.5">
+          <div className="mt-4 flex flex-wrap items-center gap-2.5">
             <div className="relative min-w-[240px] flex-1 sm:max-w-[340px]">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-[17px] w-[17px] -translate-y-1/2 text-ink3" />
               <input
@@ -383,7 +387,7 @@ export default function Customers() {
             </div>
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
             {SEGMENTS.filter((s) => s.key === "all" || segCounts[s.key] > 0).map((s) => {
               const on = segment === s.key;
               return (
@@ -391,7 +395,7 @@ export default function Customers() {
                   key={s.key}
                   onClick={() => setSegment(s.key)}
                   className={cn(
-                    "inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-[12.5px] font-semibold transition-[color,background-color,box-shadow,transform] duration-150 active:scale-[0.97]",
+                    "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] font-semibold transition-[color,background-color,box-shadow,transform] duration-150 active:scale-[0.97]",
                     on
                       ? "bg-brand-500 text-white shadow-glow"
                       : "text-ink3 ring-1 ring-inset ring-line hover:bg-line2 hover:text-ink"
@@ -421,13 +425,13 @@ export default function Customers() {
               clearLabel={query ? "Clear search" : "Clear filter"}
             />
           ) : view === "list" ? (
-            <div className="surface mt-5 overflow-hidden rounded-2xl">
+            <div className="surface mt-4 overflow-hidden rounded-2xl">
               {filtered.map((e, i) => (
                 <CustomerRow key={e.c.id} e={e} index={i} onOpen={openCustomer} />
               ))}
             </div>
           ) : (
-            <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {filtered.map((e, i) => (
                 <CustomerCard
                   key={e.c.id}
@@ -462,8 +466,8 @@ const TONE: Record<Tone, { text: string; bubble: string; chip: string }> = {
 function HeroFact({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
     <div>
-      <div className="text-[10.5px] font-semibold uppercase tracking-[0.07em] text-ink3">{label}</div>
-      <div className={cn("mt-0.5 font-display text-[19px] font-bold leading-none tracking-tight tnum text-ink", tone)}>{value}</div>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.07em] text-ink3">{label}</div>
+      <div className={cn("mt-0.5 font-display text-[16px] font-bold leading-none tracking-tight tnum text-ink", tone)}>{value}</div>
     </div>
   );
 }
@@ -487,17 +491,17 @@ function Kpi({ tone, icon: Icon, label, value, delta, deltaNote, series }: {
 }) {
   const hex = tone === "success" ? "#17A867" : "#2E7BFF";
   return (
-    <div className="surface group relative overflow-hidden rounded-2xl p-4 transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-lift">
+    <div className="surface group relative overflow-hidden rounded-2xl p-3.5 transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-lift">
       <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-paint-gloss opacity-25" />
       <div className="relative">
         <div className="flex items-center justify-between">
-          <span className={cn("flex h-9 w-9 flex-none items-center justify-center rounded-xl", TONE[tone].bubble)}><Icon className="h-[18px] w-[18px]" /></span>
+          <span className={cn("flex h-8 w-8 flex-none items-center justify-center rounded-lg", TONE[tone].bubble)}><Icon className="h-4 w-4" /></span>
           <DeltaChip value={delta} />
         </div>
-        <div className="mt-3 font-display text-[22px] font-bold leading-none tracking-tight tnum text-ink">{value}</div>
+        <div className="mt-2.5 font-display text-[19px] font-bold leading-none tracking-tight tnum text-ink">{value}</div>
         <div className="mt-1 text-[11.5px] font-medium text-ink2">{label}</div>
         <div className="mt-0.5 text-[11px] text-ink3">{deltaNote}</div>
-        <div className="-mx-1 mt-2 h-9">
+        <div className="-mx-1 mt-1.5 h-8">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={series} margin={{ top: 2, bottom: 0, left: 0, right: 0 }}>
               <defs>
@@ -520,11 +524,11 @@ function SummaryKpi({ icon: Icon, tone, label, value, note }: {
   icon: LucideIcon; tone: Tone; label: string; value: number; note: string;
 }) {
   return (
-    <div className="surface group rounded-2xl p-4 transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-lift">
+    <div className="surface group rounded-2xl p-3.5 transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-lift">
       <div className="flex items-center justify-between">
-        <span className={cn("flex h-9 w-9 flex-none items-center justify-center rounded-xl", TONE[tone].bubble)}><Icon className="h-[18px] w-[18px]" /></span>
+        <span className={cn("flex h-8 w-8 flex-none items-center justify-center rounded-lg", TONE[tone].bubble)}><Icon className="h-4 w-4" /></span>
       </div>
-      <CountUp value={value} format={(n) => String(Math.round(n))} className="mt-3 block font-display text-[22px] font-bold leading-none tracking-tight tnum text-ink" />
+      <CountUp value={value} format={(n) => String(Math.round(n))} className="mt-2.5 block font-display text-[19px] font-bold leading-none tracking-tight tnum text-ink" />
       <div className="mt-1 text-[11.5px] font-medium text-ink2">{label}</div>
       <div className="mt-0.5 text-[11px] text-ink3">{note}</div>
     </div>
@@ -659,7 +663,7 @@ function Action({ icon: Icon, label, href, onClick }: {
   icon: LucideIcon; label: string; href?: string; onClick?: () => void;
 }) {
   const cls =
-    "relative flex h-9 w-9 items-center justify-center rounded-xl text-ink3 ring-1 ring-inset ring-line transition-[color,background-color,transform,box-shadow] duration-150 hover:bg-brand-500/10 hover:text-brand-500 hover:ring-brand-500/30 active:scale-90";
+    "relative flex h-7 w-7 items-center justify-center rounded-lg text-ink3 ring-1 ring-inset ring-line transition-[color,background-color,transform,box-shadow] duration-150 hover:bg-brand-500/10 hover:text-brand-500 hover:ring-brand-500/30 active:scale-90";
   const tip = (
     <span className="pointer-events-none absolute -top-8 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-lg bg-carbon-900 px-2 py-1 text-[11px] font-medium text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover/act:opacity-100">
       {label}
@@ -671,12 +675,12 @@ function Action({ icon: Icon, label, href, onClick }: {
     <span className="group/act relative">
       {href ? (
         <a href={href} onClick={stop} aria-label={label} className={cls}>
-          <Icon className="h-4 w-4" />
+          <Icon className="h-[15px] w-[15px]" />
         </a>
       ) : (
         <button type="button" aria-label={label} className={cls}
           onClick={(e) => { e.stopPropagation(); onClick?.(); }}>
-          <Icon className="h-4 w-4" />
+          <Icon className="h-[15px] w-[15px]" />
         </button>
       )}
       {tip}
@@ -696,15 +700,6 @@ const CustomerCard = memo(function CustomerCard({ e, index, onOpen, onSchedule, 
     ? { tone: "amber" as Tone, icon: Clock, text: "Follow-up" }
     : e.isInactive
     ? { tone: "ink" as Tone, icon: Clock, text: "Inactive" }
-    : null;
-
-  // A single contextual line — only when there's something worth saying.
-  const context = e.nextAppt
-    ? { icon: CalendarCheck, tone: "success" as Tone, text: `Next: ${shortDate(e.nextAppt.at)}${e.nextAppt.service ? ` · ${e.nextAppt.service}` : ""}` }
-    : e.lastService
-    ? { icon: Wrench, tone: "brand" as Tone, text: `Last: ${e.lastService}` }
-    : e.favoriteService
-    ? { icon: TrendingUp, tone: "brand" as Tone, text: `Usually books ${e.favoriteService}` }
     : null;
 
   return (
@@ -740,7 +735,7 @@ const CustomerCard = memo(function CustomerCard({ e, index, onOpen, onSchedule, 
       )}
       <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-paint-gloss opacity-30" />
 
-      {/* Identity */}
+      {/* Identity — name is the anchor, booking status to the right, contact below */}
       <div className="relative flex items-start gap-3.5">
         <Avatar name={c.name} vip={e.isVip} />
         <div className="min-w-0 flex-1">
@@ -748,12 +743,6 @@ const CustomerCard = memo(function CustomerCard({ e, index, onOpen, onSchedule, 
             <h3 className="truncate font-display text-[17px] font-bold tracking-tight text-ink">{c.name}</h3>
             {e.isVip ? <VipBadge /> : e.isNew ? <Pill tone="brand" icon={Sparkles}>New</Pill> : null}
           </div>
-          {e.isVip && (
-            <div className="mt-1 flex items-center gap-1.5 text-[11px] font-medium text-violet">
-              <Crown className="h-3 w-3 flex-none text-warning" />
-              <span className="truncate">Premium client · {moneyShort(e.spent)} lifetime</span>
-            </div>
-          )}
           <div className="mt-1.5 flex flex-col gap-0.5">
             {c.phone && (
               <span className="flex items-center gap-1.5 truncate text-[12.5px] text-ink2">
@@ -768,58 +757,55 @@ const CustomerCard = memo(function CustomerCard({ e, index, onOpen, onSchedule, 
             {!c.phone && !c.email && <span className="text-[12.5px] text-ink3">No contact info yet</span>}
           </div>
         </div>
-        <div className="flex flex-none flex-col items-end gap-2">
-          {state && (e.isVip && e.isActive
-            ? <BookedBadge count={e.upcoming} />
-            : <Pill tone={state.tone} icon={state.icon}>{state.text}</Pill>)}
-          <ChevronRight className="h-4 w-4 text-ink3 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-brand-500" />
-        </div>
+        {state && (
+          <div className="flex-none">
+            {e.isVip && e.isActive ? <BookedBadge count={e.upcoming} /> : <Pill tone={state.tone} icon={state.icon}>{state.text}</Pill>}
+          </div>
+        )}
       </div>
 
-      {/* Stats */}
-      <div className="mt-4 grid grid-cols-4 gap-3 rounded-2xl bg-ground/50 px-3.5 py-3 ring-1 ring-inset ring-line/60">
-        <Stat icon={Car} value={String(e.vehicles)} label="Vehicles" />
-        <Stat icon={Wrench} value={String(e.details)} label="Details" />
-        <Stat icon={DollarSign} value={moneyShort(e.spent)} label="Spent" />
+      {/* Core business — spend + last visit lead, vehicles support. Divider, not a box. */}
+      <div className="mt-4 grid grid-cols-3 gap-2 border-t border-line2 pt-4">
+        <Stat icon={DollarSign} value={moneyShort(e.spent)} label="Total spent" />
         <Stat icon={Clock} value={whenLabel(e.lastVisit)} label="Last visit" />
+        <Stat icon={Car} value={String(e.vehicles)} label="Vehicles" />
       </div>
 
-      {/* Health + intelligent insights — fills the card with useful signal */}
-      <div className="mt-3 flex items-center gap-3 rounded-2xl bg-panel2/40 px-3.5 py-2.5 ring-1 ring-inset ring-line/50">
-        <HealthRing value={e.health} stroke={e.isVip ? 5.5 : 4.5} />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 text-[11.5px] font-semibold text-ink">
-            <Gauge className={cn("h-3.5 w-3.5", TONE[tier.tone].text)} />Health · {tier.label}
-            {e.isVip && <Sparkles className="h-3 w-3 flex-none text-warning" />}
-          </div>
-          <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-ink3">
-            {e.avgSpend > 0 && <span>Avg ticket <b className="font-semibold text-ink2">{moneyShort(e.avgSpend)}</b></span>}
-            {e.favoriteService && <span>Books <b className="font-semibold text-ink2">{e.favoriteService}</b></span>}
-            {e.estNextDays != null && (
-              <span>{e.estNextDays <= 0 ? <b className="font-semibold text-warning">Due to rebook</b> : <>~<b className="font-semibold text-ink2">{e.estNextDays}d</b> to rebook</>}</span>
-            )}
-          </div>
+      {/* Status — health with its meaning spelled out, and the next appointment */}
+      <div className="mt-4 flex items-center gap-3 border-t border-line2 pt-4">
+        <HealthRing value={e.health} stroke={4.5} />
+        <div className="min-w-0">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-ink3">Customer health</div>
+          <div className={cn("mt-0.5 text-[13px] font-semibold leading-none", TONE[tier.tone].text)}>{tier.label}</div>
+        </div>
+        <div className="ml-auto min-w-0 pl-2 text-right">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-ink3">Next visit</div>
+          {e.nextAppt ? (
+            <div className="mt-0.5 flex items-center justify-end gap-1 text-[13px] font-semibold leading-none text-ink">
+              <CalendarCheck className="h-3.5 w-3.5 flex-none text-success" />
+              <span className="truncate">{shortDate(e.nextAppt.at)}</span>
+            </div>
+          ) : (
+            <div className="mt-0.5 text-[12.5px] font-medium leading-none text-ink3">None booked</div>
+          )}
         </div>
       </div>
 
-      {/* Context line */}
-      {context && (
-        <div className="mt-3 flex items-center gap-1.5 truncate text-[12px]">
-          <context.icon className={cn("h-3.5 w-3.5 flex-none", TONE[context.tone].text)} />
-          <span className="truncate text-ink2">{context.text}</span>
-        </div>
-      )}
-
-      {/* Footer: quick actions + since */}
+      {/* Footer — one obvious primary action; contact/scheduling stay secondary */}
       <div className="mt-4 flex items-center gap-1.5 border-t border-line2 pt-3.5">
-        {c.phone && <Action icon={Phone} label="Call" href={`tel:${c.phone}`} />}
-        {c.email && <Action icon={Mail} label="Email" href={`mailto:${c.email}`} />}
-        <Action icon={CalendarPlus} label="Schedule" onClick={onSchedule} />
-        <Action icon={Receipt} label="Invoice" onClick={onInvoice} />
-        <Action icon={UserRound} label="View profile" onClick={() => onOpen(c.id)} />
-        <span className="ml-auto whitespace-nowrap text-[11px] text-ink3">
-          Since {monthYear(c.created_at)}
-        </span>
+        <button
+          type="button"
+          onClick={(ev) => { ev.stopPropagation(); onOpen(c.id); }}
+          className="inline-flex min-w-0 flex-1 items-center justify-center gap-0.5 rounded-xl bg-brand-500/10 px-2.5 py-2 text-[13px] font-semibold text-brand-600 ring-1 ring-inset ring-brand-500/20 transition-[background-color,color,box-shadow] duration-150 hover:bg-brand-500 hover:text-white hover:ring-brand-500"
+        >
+          View customer <ChevronRight className="h-4 w-4 flex-none" />
+        </button>
+        <div className="flex flex-none items-center gap-0.5">
+          {c.phone && <Action icon={Phone} label="Call" href={`tel:${c.phone}`} />}
+          {c.email && <Action icon={Mail} label="Email" href={`mailto:${c.email}`} />}
+          <Action icon={CalendarPlus} label="Schedule" onClick={onSchedule} />
+          <Action icon={Receipt} label="Invoice" onClick={onInvoice} />
+        </div>
       </div>
     </motion.div>
   );

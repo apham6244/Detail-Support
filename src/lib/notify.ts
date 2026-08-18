@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, apiConfigured } from "./api";
+import { isDemo } from "./demo";
 
 /**
  * Delivery goes through the API server, because provider keys are secrets and
@@ -45,6 +46,9 @@ export function useDelivery(): DeliveryStatus {
 
   useEffect(() => {
     let active = true;
+    // Demo is a read-only, no-account preview: it sets no JWT and must make zero
+    // external calls, so skip the probe and stay in manual (OFFLINE) mode.
+    if (isDemo()) return;
     (async () => {
       if (!apiConfigured) return;
       try {

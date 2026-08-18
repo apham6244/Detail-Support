@@ -2,6 +2,18 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 import type { Invitation, Role, TeamMember } from "@/lib/models";
+import { isDemo, demoGuard, DEMO_USER, DEMO_PROFILE, DEMO_ROLE } from "@/lib/demo";
+
+const DEMO_TEAM: TeamMember[] = [
+  {
+    id: "demo-membership",
+    user_id: DEMO_USER.id,
+    role: DEMO_ROLE as Role,
+    status: "active",
+    created_at: new Date().toISOString(),
+    profile: { id: DEMO_USER.id, full_name: DEMO_PROFILE.full_name, email: DEMO_USER.email },
+  } as TeamMember,
+];
 
 /** Build the shareable accept link for an invitation token. */
 export function inviteLink(token: string): string {
@@ -19,7 +31,7 @@ function friendly(message: string): string {
 
 export function useTeam() {
   const { org, user, role } = useAuth();
-  const [members, setMembers] = useState<TeamMember[]>([]);
+  const [members, setMembers] = useState<TeamMember[]>(isDemo() ? DEMO_TEAM : []);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -27,6 +39,11 @@ export function useTeam() {
   const isAdmin = role === "owner" || role === "admin";
 
   const load = useCallback(async () => {
+    if (isDemo()) {
+      setMembers(DEMO_TEAM); // read-only preview makes no DB calls
+      setInvitations([]);
+      return;
+    }
     if (!supabase || !org) {
       setMembers([]);
       setInvitations([]);
@@ -76,6 +93,7 @@ export function useTeam() {
   }, [load]);
 
   const invite = async (email: string, inviteRole: Role): Promise<Invitation> => {
+    demoGuard();
     if (!supabase || !org || !user) throw new Error("Sign in first.");
     const { data, error } = await supabase
       .from("invitations")
@@ -89,6 +107,7 @@ export function useTeam() {
   };
 
   const resend = async (id: string): Promise<Invitation> => {
+    demoGuard();
     if (!supabase) throw new Error("Not available.");
     const expires = new Date(Date.now() + 7 * 86_400_000).toISOString();
     const { data, error } = await supabase
@@ -104,6 +123,7 @@ export function useTeam() {
   };
 
   const revoke = async (id: string) => {
+    demoGuard();
     if (!supabase) throw new Error("Not available.");
     const { data, error } = await supabase
       .from("invitations")
@@ -116,6 +136,7 @@ export function useTeam() {
   };
 
   const deleteInvite = async (id: string) => {
+    demoGuard();
     if (!supabase) throw new Error("Not available.");
     const { error } = await supabase.from("invitations").delete().eq("id", id);
     if (error) throw new Error(friendly(error.message));
@@ -123,6 +144,7 @@ export function useTeam() {
   };
 
   const changeRole = async (membershipId: string, newRole: Role) => {
+    demoGuard();
     if (!supabase) throw new Error("Not available.");
     const { error } = await supabase.rpc("set_member_role", {
       p_membership: membershipId,
@@ -133,6 +155,7 @@ export function useTeam() {
   };
 
   const removeMember = async (membershipId: string) => {
+    demoGuard();
     if (!supabase) throw new Error("Not available.");
     const { error } = await supabase.rpc("remove_member", { p_membership: membershipId });
     if (error) throw new Error(friendly(error.message));
@@ -140,6 +163,7 @@ export function useTeam() {
   };
 
   const transferOwnership = async (membershipId: string) => {
+    demoGuard();
     if (!supabase) throw new Error("Not available.");
     const { error } = await supabase.rpc("transfer_ownership", { p_membership: membershipId });
     if (error) throw new Error(friendly(error.message));

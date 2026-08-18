@@ -155,10 +155,14 @@ export function Combobox<T extends ComboOption>({
       const o = filtered[hi];
       if (o) choose(o);
     } else if (e.key === "Escape") {
+      // Consume it: closing the open menu must not also close a parent Modal.
       e.preventDefault();
+      e.stopPropagation();
       setOpen(false);
       triggerRef.current?.focus();
     } else if (e.key === "Tab") {
+      // Let focus move natively, but don't let a parent focus-trap also react.
+      e.stopPropagation();
       setOpen(false);
     }
   };

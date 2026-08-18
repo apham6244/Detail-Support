@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabase";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import type { Reminder } from "@/lib/models";
+import { isDemo, demoGuard } from "@/lib/demo";
 
 export function useReminders() {
   const { org } = useAuth();
@@ -10,6 +11,10 @@ export function useReminders() {
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
+    if (isDemo()) {
+      setReminders([]); // read-only preview makes no DB calls
+      return;
+    }
     if (!supabase || !org) {
       setReminders([]);
       return;
@@ -29,6 +34,7 @@ export function useReminders() {
   }, [load]);
 
   const create = async (appointmentId: string, remindAt: string, channel = "sms") => {
+    demoGuard();
     if (!supabase || !org) throw new Error("Sign in first.");
     const { data, error } = await supabase
       .from("appointment_reminders")
@@ -46,6 +52,7 @@ export function useReminders() {
    * scheduler takes when it comes due.
    */
   const sendNow = async (id: string) => {
+    demoGuard();
     const result = await api<{ channel: string; to: string; provider: string }>("/notify/reminder", {
       method: "POST",
       body: JSON.stringify({ reminderId: id }),
@@ -56,6 +63,7 @@ export function useReminders() {
 
   /** Fallback when the API isn't reachable: just record that it went out. */
   const markSent = async (id: string) => {
+    demoGuard();
     if (!supabase) throw new Error("Not available.");
     const { data, error } = await supabase
       .from("appointment_reminders")
@@ -68,6 +76,7 @@ export function useReminders() {
   };
 
   const remove = async (id: string) => {
+    demoGuard();
     if (!supabase) throw new Error("Not available.");
     const { error } = await supabase.from("appointment_reminders").delete().eq("id", id);
     if (error) throw new Error(error.message);

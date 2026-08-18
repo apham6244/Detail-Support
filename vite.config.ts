@@ -48,23 +48,9 @@ export default defineConfig({
         navigateFallbackDenylist: [/^\/api/, /supabase\.co/],
         cleanupOutdatedCaches: true,
         clientsClaim: true,
+        // Fonts (Inter + Sora) are self-hosted and bundled, so they land in the
+        // precache automatically — no Google Fonts runtime rule needed.
         runtimeCaching: [
-          {
-            // Google Fonts stylesheet — revalidate in the background.
-            urlPattern: ({ url }) => url.origin === "https://fonts.googleapis.com",
-            handler: "StaleWhileRevalidate",
-            options: { cacheName: "google-fonts-stylesheets" },
-          },
-          {
-            // Google Fonts webfont files — immutable, cache hard for a year.
-            urlPattern: ({ url }) => url.origin === "https://fonts.gstatic.com",
-            handler: "CacheFirst",
-            options: {
-              cacheName: "google-fonts-webfonts",
-              expiration: { maxEntries: 20, maxAgeSeconds: 60 * 60 * 24 * 365 },
-              cacheableResponse: { statuses: [0, 200] },
-            },
-          },
           {
             // Remote imagery (Unsplash automotive photography) — serve fast from
             // cache, refresh in the background, cap the cache size.

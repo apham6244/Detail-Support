@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 import type { Quote, QuoteLineItem, QuoteStatus } from "@/lib/models";
+import { isDemo, demoGuard } from "@/lib/demo";
 
 export type QuoteLineInput = Omit<QuoteLineItem, "id" | "amount">;
 
@@ -58,6 +59,10 @@ export function useQuotes() {
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
+    if (isDemo()) {
+      setQuotes([]); // read-only preview makes no DB calls
+      return;
+    }
     if (!supabase || !org) {
       setQuotes([]);
       return;
@@ -73,6 +78,7 @@ export function useQuotes() {
   }, [load]);
 
   const create = async (input: QuoteInput) => {
+    demoGuard();
     if (!supabase || !org) throw new Error("Sign in to create quotes.");
     const { lines, subtotal, discount, tax, total } = totals(input);
 

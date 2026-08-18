@@ -5,11 +5,10 @@ import { ResponsiveContainer, AreaChart, Area, XAxis, Tooltip } from "recharts";
 import {
   CalendarClock,
   CalendarPlus,
-  Car,
+  CalendarDays,
   ArrowRight,
   CheckCircle2,
   DollarSign,
-  Wallet,
   Users,
   UserPlus,
   Star,
@@ -44,6 +43,7 @@ import { useCustomers } from "@/hooks/useCustomers";
 import { useAppointments } from "@/hooks/useAppointments";
 import { useInvoices } from "@/hooks/useInvoices";
 import { useServices } from "@/hooks/useServices";
+import { useMembers } from "@/hooks/useMembers";
 import { OnboardingChecklist } from "@/components/onboarding/OnboardingChecklist";
 import {
   vehicleLabel,
@@ -73,20 +73,12 @@ const BADGE: Record<CoachBadge, { label: string; cls: string }> = {
 };
 
 const APPT_BADGE: Record<AppointmentStatus, string> = {
-  scheduled: "bg-brand-500/10 text-brand-500",
-  confirmed: "bg-violet/10 text-violet",
-  in_progress: "bg-warning/10 text-warning",
-  completed: "bg-success/10 text-success",
-  cancelled: "bg-ink3/10 text-ink3",
-  no_show: "bg-danger/10 text-danger",
-};
-const APPT_DOT: Record<AppointmentStatus, string> = {
-  scheduled: "bg-brand-500",
-  confirmed: "bg-violet",
-  in_progress: "bg-warning",
-  completed: "bg-success",
-  cancelled: "bg-ink3",
-  no_show: "bg-danger",
+  scheduled: "bg-brand-500/10 text-brand-500 ring-brand-500/20",
+  confirmed: "bg-violet/10 text-violet ring-violet/20",
+  in_progress: "bg-warning/10 text-warning ring-warning/20",
+  completed: "bg-success/10 text-success ring-success/20",
+  cancelled: "bg-ink3/10 text-ink3 ring-ink3/20",
+  no_show: "bg-danger/10 text-danger ring-danger/20",
 };
 
 const fmtTime = (iso: string) =>
@@ -108,6 +100,7 @@ export default function Dashboard() {
   const { appointments, loading: aL } = useAppointments();
   const { invoices, loading: iL } = useInvoices();
   const { services } = useServices();
+  const { byId } = useMembers();
 
   const m = useMemo(() => {
     const now = new Date();
@@ -127,6 +120,16 @@ export default function Dashboard() {
     const upcomingToday = todays.filter((a) => a.status === "scheduled" || a.status === "confirmed").length;
     const inProgress = todays.filter((a) => a.status === "in_progress").length;
     const completedToday = todays.filter((a) => a.status === "completed").length;
+    // Booked value ("expected") for today and this calendar week.
+    const todayExpected = todays.reduce((s, a) => s + (a.price ?? 0), 0);
+    const weekStart = startToday.getTime() - now.getDay() * 86_400_000;
+    const weekEnd = weekStart + 7 * 86_400_000;
+    const weekList = appointments.filter((a) => {
+      const t = new Date(a.scheduled_at).getTime();
+      return t >= weekStart && t < weekEnd && a.status !== "cancelled";
+    });
+    const weekJobs = weekList.length;
+    const weekExpected = weekList.reduce((s, a) => s + (a.price ?? 0), 0);
 
     // --- Revenue ---
     const collected = (inv: (typeof invoices)[number]) =>
@@ -139,6 +142,20 @@ export default function Dashboard() {
       (s, inv) => (isToday(inv.issued_at || inv.created_at) ? s + collected(inv) : s),
       0
     );
+    // Yesterday, for a "vs yesterday" read on today's revenue.
+    const startYesterday = new Date(startToday.getTime() - 86_400_000);
+    const yesterdayRevenue = invoices.reduce((s, inv) => {
+      const t = new Date(inv.issued_at || inv.created_at);
+      return t >= startYesterday && t < startToday ? s + collected(inv) : s;
+    }, 0);
+    const todayVsYesterday =
+      yesterdayRevenue > 0 ? ((todayRevenue - yesterdayRevenue) / yesterdayRevenue) * 100 : null;
+    // Booked-but-not-yet-earned revenue (future confirmed/scheduled jobs).
+    const upcomingJobs = appointments.filter(
+      (a) => (a.status === "scheduled" || a.status === "confirmed") && new Date(a.scheduled_at).getTime() >= now.getTime()
+    );
+    const upcomingRevenue = upcomingJobs.reduce((s, a) => s + (a.price ?? 0), 0);
+    const upcomingCount = upcomingJobs.length;
     const totalCollected = invoices.reduce((s, inv) => s + collected(inv), 0);
     const completedServicesMonth = appointments.filter(
       (a) => a.status === "completed" && inThisMonth(a.scheduled_at)
@@ -211,10 +228,17 @@ export default function Dashboard() {
       completedToday,
       monthlyRevenue,
       todayRevenue,
+      todayVsYesterday,
+      todayExpected,
+      weekJobs,
+      weekExpected,
+      upcomingRevenue,
+      upcomingCount,
       completedServicesMonth,
       avgCustomerValue,
       revSeries,
       revenueGrowth,
+      showMoM: lastMonthRev > 0,
       hasRevenue,
       returning,
       newThisMonth,
@@ -280,17 +304,6 @@ export default function Dashboard() {
       { key: "jobs", label: "Jobs goal", icon: CheckCircle2, cur: thisJobs, goal: jobsGoal, money: false, tone: "blue" as const, ...forecast(thisJobs, jobsGoal) },
       { key: "cust", label: "New customers", icon: UserPlus, cur: thisCust, goal: custGoal, money: false, tone: "purple" as const, ...forecast(thisCust, custGoal) },
     ];
-
-    // one motivational line — the nearest reachable goal
-    const jobsLeft = Math.max(0, jobsGoal - thisJobs);
-    const revLeft = Math.max(0, revGoal - thisRev);
-    const custLeft = Math.max(0, custGoal - thisCust);
-    let insight: string;
-    if (thisRev >= revGoal && thisJobs >= jobsGoal) insight = "You've hit your monthly goals — outstanding month. 🏆";
-    else if (jobsLeft > 0 && jobsLeft <= 4) insight = `You're only ${jobsLeft} ${jobsLeft === 1 ? "job" : "jobs"} away from your monthly target.`;
-    else if (revLeft > 0 && revLeft <= revGoal * 0.35) insight = `Just ${money(revLeft)} to go to reach your revenue goal.`;
-    else if (custLeft > 0 && custLeft <= 3) insight = `${custLeft} more new ${custLeft === 1 ? "customer" : "customers"} hits your growth goal.`;
-    else insight = "You're building steady momentum this month.";
 
     // busiest / quietest weekday, top service (for the coach)
     const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -388,7 +401,7 @@ export default function Dashboard() {
     for (const c of customers) acts.push({ at: c.created_at, icon: UserPlus, tone: "brand", text: <><b className="text-ink">{c.name}</b> added as a customer</> });
     const activity = acts.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 6);
 
-    return { goals, insight, coach: coach.slice(0, 4), spotlight, activity };
+    return { goals, coach: coach.slice(0, 4), spotlight, activity };
   }, [appointments, invoices, customers, services, m]);
 
   if (!org) return <SignInPrompt what="dashboard" />;
@@ -414,6 +427,14 @@ export default function Dashboard() {
   const showStats = showRevenue && (customers.length > 0 || invoices.length > 0);
   const showInsights = showRevenue && m.hasRevenue;
 
+  // Revenue goal (target auto-derived in `x`) — surfaced in the hero next to the
+  // monthly figure so "how close am I?" is answered at a glance.
+  const goalTarget = x.goals[0]?.goal ?? 0;
+  const goalLeft = Math.max(0, goalTarget - m.monthlyRevenue);
+  // Floor + cap at 99% until truly reached, so "99%" never sits next to "$10 left".
+  const goalPct =
+    goalTarget <= 0 ? 0 : goalLeft <= 0 ? 100 : Math.min(99, Math.floor((m.monthlyRevenue / goalTarget) * 100));
+
   return (
     <div className="animate-fade-up relative">
       {/* Ambient light — the hero's blue bleeds down into the page so the sections
@@ -423,69 +444,47 @@ export default function Dashboard() {
         <div className="absolute right-[6%] top-56 h-64 w-64 rounded-full bg-violet/[0.06] blur-[100px]" />
       </div>
 
-      {/* Premium command-center hero */}
-      <div className="relative min-h-[248px] overflow-hidden rounded-[24px] shadow-hero-dark sm:min-h-[288px]">
+      {/* Compact premium header — greeting + primary action over the car photo */}
+      <div className="relative overflow-hidden rounded-[20px] shadow-hero-dark">
         <DetailImage
           src={unsplash(PHOTO.glossyBlack, { w: 1600, q: 60 })}
           alt="Freshly detailed car with a deep gloss finish"
           className="absolute inset-0"
           eager
         />
-        {/* richer, layered overlay — reads on the photo, dissolves into the app */}
-        <div className="absolute inset-0 bg-gradient-to-r from-carbon-950 via-carbon-950/88 to-carbon-950/20" />
-        <div className="absolute inset-0 bg-gradient-to-t from-carbon-950/70 to-transparent to-55%" />
-        <div className="absolute inset-0 bg-paint-gloss opacity-70" />
-        <div aria-hidden className="pointer-events-none absolute -left-16 -top-16 h-64 w-64 rounded-full bg-brand-500/20 blur-[90px]" />
-        <div className="relative px-5 py-7 sm:px-9 sm:py-9">
-          <div className="flex items-center gap-2 text-[11.5px] font-semibold uppercase tracking-[0.15em] text-brand-300">
-            <span className="relative flex h-1.5 w-1.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand-400 opacity-70" />
-              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-brand-400" />
-            </span>
-            {businessName}
-            <span className="text-white/40">·</span>
-            <span className="text-white/70">
-              {new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
-            </span>
-          </div>
-          <h1 className="font-display mt-2.5 max-w-xl text-[27px] font-extrabold leading-[1.06] text-white sm:text-[34px]">
-            {greeting}
-            {firstName ? `, ${firstName}` : ""} <span className="align-middle">👋</span>
-          </h1>
-
-          {/* motivational, data-driven insight */}
-          {showRevenue && (
-            <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/[0.07] px-3 py-1.5 text-[12.5px] font-medium text-white/85 backdrop-blur-md">
-              <Sparkles className="h-3.5 w-3.5 text-brand-300" />
-              {x.insight}
+        {/* Subtle dark gradient for readability — kept light enough that the car stays visible */}
+        <div className="absolute inset-0 bg-gradient-to-r from-carbon-950/92 via-carbon-950/68 to-carbon-950/25" />
+        <div className="absolute inset-0 bg-gradient-to-t from-carbon-950/55 to-transparent to-60%" />
+        <div className="absolute inset-0 bg-paint-gloss opacity-45" />
+        <div className="relative flex flex-col gap-3.5 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-7 sm:py-6">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-300">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand-400 opacity-70" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-brand-400" />
+              </span>
+              <span className="truncate">{businessName}</span>
+              <span className="flex-none text-white/40">·</span>
+              <span className="truncate text-white/70">
+                {new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+              </span>
             </div>
-          )}
-
-          <div className="mt-4 flex flex-wrap gap-2.5">
-            <HeroStat icon={CalendarClock} label="Today's jobs" value={m.todays.length} />
-            {showRevenue && <HeroStat icon={DollarSign} label="Today's revenue" value={m.todayRevenue} money />}
-            <HeroStat icon={CheckCircle2} label="Completed today" value={m.completedToday} />
-          </div>
-
-          {/* monthly goal progress — glass mini-bars */}
-          {showRevenue && (
-            <div className="mt-4 grid max-w-2xl gap-2.5 sm:grid-cols-3">
-              {x.goals.map((g) => (
-                <HeroGoal key={g.key} label={g.label} cur={g.cur} goal={g.goal} money={g.money} />
-              ))}
-            </div>
-          )}
-
-          <div className="mt-5 flex flex-wrap gap-2.5">
-            {canInvoice ? (
-              <>
-                <HeroAction to="/appointments" icon={CalendarPlus} label="New appointment" primary />
-                <HeroAction to="/customers" icon={UserPlus} label="Add customer" />
-                <HeroAction to="/invoices" icon={FileText} label="New invoice" />
-              </>
-            ) : (
-              <HeroAction to="/schedule" icon={CalendarPlus} label="My schedule" primary />
+            <h1 className="font-display mt-1.5 text-[24px] font-extrabold leading-[1.05] tracking-tight text-white sm:text-[28px]">
+              {greeting}{firstName ? `, ${firstName}` : ""} <span className="align-middle">👋</span>
+            </h1>
+            {!showRevenue && (
+              <p className="mt-1.5 text-[12.5px] text-white/70">
+                {m.todays.length} {m.todays.length === 1 ? "job" : "jobs"} today · {m.completedToday} completed
+              </p>
             )}
+          </div>
+          <div className="flex-none">
+            <HeroAction
+              to={canInvoice ? "/appointments" : "/schedule"}
+              icon={CalendarPlus}
+              label={canInvoice ? "New appointment" : "My schedule"}
+              primary
+            />
           </div>
         </div>
       </div>
@@ -501,7 +500,28 @@ export default function Dashboard() {
         />
       )}
 
-      {/* Needs attention — only appears when something actually needs doing */}
+      {/* KPI row — 4 compact, equal-weight cards. Revenue matters but no longer
+          dominates; the goal rides along as a subtle secondary indicator. */}
+      {showStats && (
+        <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <KpiCard index={0} accent="success" icon={DollarSign} label="Monthly revenue" value={m.monthlyRevenue} isMoney
+            trend={m.showMoM ? m.revenueGrowth : undefined}
+            goal={goalTarget > 0 ? { pct: goalPct, left: goalLeft } : undefined} />
+          <KpiCard index={1} accent="brand" icon={CalendarClock} label="Today's jobs" value={m.todays.length}
+            suffix={m.todays.length === 1 ? "job" : "jobs"} sub={`${money(m.todayExpected)} expected`} />
+          <KpiCard index={2} accent="violet" icon={CalendarDays} label="This week" value={m.weekJobs}
+            suffix={m.weekJobs === 1 ? "job" : "jobs"} sub={`${money(m.weekExpected)} expected`} />
+          <KpiCard index={3} accent="warning" icon={Users} label="Customers" value={customers.length}
+            sub={m.newThisMonth > 0 ? `+${m.newThisMonth} this month` : "No new this month"} />
+        </div>
+      )}
+
+      {/* PRIMARY — today's schedule, full width and prominent */}
+      <div className="mt-4">
+        <ScheduleWidget todays={m.todays} todayExpected={m.todayExpected} canInvoice={canInvoice} byId={byId} />
+      </div>
+
+      {/* Needs attention — actionable alerts tied to today's work */}
       <NeedsAttention
         overdueCount={m.overdueCount}
         overdueAmount={m.overdueAmount}
@@ -511,35 +531,22 @@ export default function Dashboard() {
         showMoney={showRevenue}
       />
 
-      {/* This month — engaging animated stat cards */}
-      {showStats && (
-        <div className="mt-5 grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-          <StatCard index={0} accent="success" icon={DollarSign} label="Revenue this month" value={m.monthlyRevenue} isMoney trend={m.revenueGrowth} />
-          <StatCard index={1} accent="brand" icon={CheckCircle2} label="Completed jobs" value={m.completedServicesMonth} sub="this month" />
-          <StatCard index={2} accent="violet" icon={Wallet} label="Avg. ticket" value={m.avgCustomerValue} isMoney sub="per customer" />
-          <StatCard index={3} accent="warning" icon={Users} label="Customers" value={customers.length} sub={`${m.newThisMonth} new this month`} />
+      {/* Quick actions — small and clean; New appointment stays the primary */}
+      {canInvoice && (
+        <div className="mt-5 flex flex-wrap gap-2.5">
+          <QuickAction to="/appointments" icon={CalendarPlus} label="New appointment" primary />
+          <QuickAction to="/customers" icon={UserPlus} label="Add customer" />
+          <QuickAction to="/invoices" icon={FileText} label="New invoice" />
         </div>
       )}
 
-      {/* Command center — schedule feed alongside the money widgets */}
-      <div className={cn("mt-3.5 grid gap-3.5", showInsights && "lg:grid-cols-[1.6fr_1fr]")}>
-        <ScheduleWidget
-          todays={m.todays}
-          inProgress={m.inProgress}
-          completedToday={m.completedToday}
-          canInvoice={canInvoice}
-        />
-        {showInsights && (
-          <div className="flex flex-col gap-3.5">
+      {/* Secondary analytics — revenue trend + completion, then coach/goals, spotlight/activity */}
+      {showInsights && (
+        <>
+          <div className="mt-6 grid gap-3.5 lg:grid-cols-2">
             <RevenueWidget series={m.revSeries} total={m.monthlyRevenue} growth={m.revenueGrowth} />
             <CompletionWidget rate={m.completionRate} completed={m.completedAll} total={m.totalAppts} />
           </div>
-        )}
-      </div>
-
-      {/* Premium insights — coach + goals, then spotlight + activity */}
-      {showInsights && (
-        <>
           <div className="mt-3.5 grid gap-3.5 lg:grid-cols-[1.4fr_1fr]">
             <BusinessCoach items={x.coach} />
             <GoalsWidget goals={x.goals} />
@@ -612,45 +619,63 @@ function Widget({
   );
 }
 
-/** An animated, premium stat card with a counter and an optional trend chip. */
-function StatCard({
-  icon: Icon,
-  label,
-  value,
-  isMoney,
-  accent,
-  trend,
-  sub,
-  index,
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: number;
-  isMoney?: boolean;
-  accent: Accent;
-  trend?: number;
-  sub?: string;
-  index: number;
+/** Compact, equal-weight KPI card. Label on top, value below, then either a
+ *  subtle goal bar (revenue) or a supporting sub-line. */
+function KpiCard({ icon: Icon, label, value, isMoney, suffix, accent, trend, sub, goal, index }: {
+  icon: LucideIcon; label: string; value: number; isMoney?: boolean; suffix?: string;
+  accent: Accent; trend?: number; sub?: string; goal?: { pct: number; left: number }; index: number;
 }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay: index * 0.06, ease: "easeOut" }}
-      className="surface gloss-card group rounded-2xl p-4"
+      className="surface gloss-card group flex flex-col rounded-2xl p-3.5"
     >
-      <div className="flex items-start justify-between gap-2">
-        <span className={cn("flex h-9 w-9 items-center justify-center rounded-xl ring-1 ring-inset", ACCENT_BUBBLE[accent])}>
-          <Icon className="h-[18px] w-[18px]" />
-        </span>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className={cn("flex h-7 w-7 flex-none items-center justify-center rounded-lg ring-1 ring-inset", ACCENT_BUBBLE[accent])}>
+            <Icon className="h-[15px] w-[15px]" />
+          </span>
+          <span className="truncate text-[11px] font-semibold uppercase tracking-[0.05em] text-ink3">{label}</span>
+        </div>
         {trend !== undefined && <TrendChip value={trend} />}
       </div>
-      <div className="mt-3 font-display text-[26px] font-bold leading-none tracking-tight tnum text-ink">
+      <div className="mt-2.5 flex items-baseline gap-1 font-display text-[22px] font-bold leading-none tracking-tight tnum text-ink">
         <CountUp value={value} format={isMoney ? (n) => money(Math.round(n)) : undefined} />
+        {suffix && <span className="text-[12px] font-semibold text-ink3">{suffix}</span>}
       </div>
-      <div className="mt-1.5 text-[12px] font-medium text-ink2">{label}</div>
-      {sub && <div className="mt-0.5 text-[11.5px] text-ink3">{sub}</div>}
+      {goal ? (
+        <div className="mt-2.5">
+          <div className="h-1 overflow-hidden rounded-full bg-line2">
+            <motion.div className="h-full rounded-full bg-success" initial={{ width: 0 }} animate={{ width: `${goal.pct}%` }} transition={{ duration: 0.8, ease: "easeOut" }} />
+          </div>
+          <div className="mt-1.5 text-[10.5px] font-medium text-success">
+            {goal.left > 0 ? `${money(Math.round(goal.left))} left to goal · ${goal.pct}%` : `Goal reached · ${goal.pct}%`}
+          </div>
+        </div>
+      ) : sub ? (
+        <div className="mt-1.5 text-[11.5px] text-ink3">{sub}</div>
+      ) : null}
     </motion.div>
+  );
+}
+
+/** Small quick-action button — primary uses the brand gradient, others stay calm. */
+function QuickAction({ to, icon: Icon, label, primary }: { to: string; icon: LucideIcon; label: string; primary?: boolean }) {
+  return (
+    <Link
+      to={to}
+      className={cn(
+        "inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-[13px] font-semibold tracking-[0.01em] transition-[transform,background-color,box-shadow,filter] duration-150 ease-out active:scale-[0.97]",
+        primary
+          ? "bg-gradient-to-b from-brand-400 to-brand-600 text-white shadow-glow hover:shadow-glow-lg hover:brightness-[1.05]"
+          : "surface text-ink2 hover:text-ink hover:shadow-lift"
+      )}
+    >
+      <Icon className="h-4 w-4" />
+      {label}
+    </Link>
   );
 }
 
@@ -672,14 +697,14 @@ function TrendChip({ value }: { value: number }) {
 
 function ScheduleWidget({
   todays,
-  inProgress,
-  completedToday,
+  todayExpected,
   canInvoice,
+  byId,
 }: {
   todays: Appointment[];
-  inProgress: number;
-  completedToday: number;
+  todayExpected: number;
   canInvoice: boolean;
+  byId: Map<string, { name: string }>;
 }) {
   return (
     <Widget
@@ -688,7 +713,7 @@ function ScheduleWidget({
       subtitle={
         todays.length === 0
           ? "Nothing booked yet"
-          : `${todays.length} ${todays.length === 1 ? "job" : "jobs"} · ${inProgress} in progress · ${completedToday} done`
+          : `${todays.length} ${todays.length === 1 ? "appointment" : "appointments"} · ${money(todayExpected)} expected`
       }
       action={
         <Link
@@ -703,13 +728,13 @@ function ScheduleWidget({
       {todays.length === 0 ? (
         <DashEmpty
           title="No appointments scheduled yet"
-          body="Your workday shows up here — customer, vehicle, service, time, and status for every job. Book a detail to get rolling."
+          body="Your workday shows up here — time, service, customer, vehicle, and status for every job. Book a detail to get rolling."
           cta={canInvoice ? { to: "/appointments", label: "Book your first appointment" } : undefined}
         />
       ) : (
-        <div className="flex flex-col">
+        <div className="flex flex-col gap-1.5">
           {todays.map((a, i) => (
-            <ApptRow key={a.id} appt={a} index={i} />
+            <ApptRow key={a.id} appt={a} index={i} assignee={a.assigned_to ? byId.get(a.assigned_to)?.name ?? "Assigned" : null} />
           ))}
         </div>
       )}
@@ -717,44 +742,58 @@ function ScheduleWidget({
   );
 }
 
-function ApptRow({ appt, index }: { appt: Appointment; index: number }) {
+function ApptRow({ appt, index, assignee }: { appt: Appointment; index: number; assignee?: string | null }) {
   const price = appt.price;
-  const time = fmtTime(appt.scheduled_at);
-  const [clock, meridiem] = time.split(" ");
+  const [clock, meridiem] = fmtTime(appt.scheduled_at).split(" ");
+  const svc = appt.service?.name;
+  const cust = appt.customer?.name ?? "Customer";
+  const vehicle = appt.vehicle ? vehicleLabel(appt.vehicle) : null;
+  // Time is the anchor; service leads the job, customer · vehicle + assignee support it.
+  const title = svc ?? cust;
   return (
     <motion.div
       initial={{ opacity: 0, x: -8 }}
       animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.3, delay: 0.12 + index * 0.05, ease: "easeOut" }}
-      className="group flex items-center gap-3 rounded-xl px-2 py-2.5 transition-colors hover:bg-panel2/70"
+      transition={{ duration: 0.3, delay: 0.1 + index * 0.05, ease: "easeOut" }}
     >
-      {/* time badge */}
-      <div className="flex h-12 w-14 flex-none flex-col items-center justify-center rounded-xl bg-brand-500/10 text-brand-500 ring-1 ring-inset ring-brand-500/10">
-        <span className="text-[13px] font-bold leading-none tnum">{clock}</span>
-        {meridiem && <span className="mt-0.5 text-[8.5px] font-bold uppercase tracking-wide text-brand-500/70">{meridiem}</span>}
-      </div>
-      {/* vehicle indicator */}
-      <div className="hidden h-10 w-10 flex-none items-center justify-center rounded-lg bg-line2 text-ink3 sm:flex">
-        <Car className="h-[18px] w-[18px]" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <span className={cn("h-2 w-2 flex-none rounded-full", APPT_DOT[appt.status])} />
-          <span className="truncate text-[13.5px] font-semibold text-ink">{appt.customer?.name ?? "Customer"}</span>
+      <Link
+        to="/appointments"
+        className="group flex items-center gap-3 rounded-xl border border-line/70 bg-panel2/40 px-3 py-2.5 transition-[background-color,border-color] duration-200 hover:border-brand-500/30 hover:bg-panel2/80"
+      >
+        {/* TIME — strongest anchor */}
+        <div className="flex h-12 w-14 flex-none flex-col items-center justify-center rounded-lg bg-brand-500/10 text-brand-500 ring-1 ring-inset ring-brand-500/15">
+          <span className="text-[13.5px] font-bold leading-none tnum">{clock}</span>
+          {meridiem && <span className="mt-0.5 text-[9px] font-bold uppercase tracking-wide text-brand-500/70">{meridiem}</span>}
         </div>
-        <div className="mt-0.5 truncate pl-3.5 text-xs text-ink3">
-          {appt.vehicle ? vehicleLabel(appt.vehicle) : "Vehicle"}
-          {appt.service?.name ? ` · ${appt.service.name}` : ""}
+
+        {/* SERVICE → customer · vehicle → assignee */}
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[14px] font-bold tracking-tight text-ink">{title}</div>
+          {svc && (
+            <div className="mt-0.5 flex items-center gap-1.5 text-[12px] leading-tight">
+              <span className="min-w-0 truncate font-semibold text-ink2">{cust}</span>
+              {vehicle && <><span className="flex-none text-line2">·</span><span className="min-w-0 truncate text-ink3">{vehicle}</span></>}
+            </div>
+          )}
+          {!svc && vehicle && <div className="mt-0.5 truncate text-[12px] text-ink3">{vehicle}</div>}
+          {assignee && (
+            <div className="mt-1 flex items-center gap-1 text-[11px] text-ink3">
+              <span className="flex h-4 w-4 flex-none items-center justify-center rounded-full bg-brand-500/12 text-[8px] font-bold uppercase text-brand-500">{initials(assignee)}</span>
+              <span className="truncate">{assignee}</span>
+            </div>
+          )}
         </div>
-      </div>
-      <div className="flex flex-col items-end gap-1">
-        <span className={cn("whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-semibold", APPT_BADGE[appt.status])}>
-          {APPOINTMENT_STATUS_LABEL[appt.status]}
-        </span>
-        {typeof price === "number" && price > 0 && (
-          <span className="text-[12px] font-semibold tnum text-ink2">{money(price)}</span>
-        )}
-      </div>
+
+        {/* PRICE → STATUS */}
+        <div className="flex flex-none flex-col items-end gap-1">
+          {typeof price === "number" && price > 0 && (
+            <span className="text-[14px] font-bold tnum text-ink">{money(price)}</span>
+          )}
+          <span className={cn("whitespace-nowrap rounded-full px-2 py-0.5 text-[10.5px] font-semibold ring-1 ring-inset", APPT_BADGE[appt.status])}>
+            {APPOINTMENT_STATUS_LABEL[appt.status]}
+          </span>
+        </div>
+      </Link>
     </motion.div>
   );
 }
@@ -871,27 +910,6 @@ const ago = (iso: string) => {
   if (days < 30) return `${days}d ago`;
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 };
-
-/** Glassy monthly-goal bar for the hero (renders on the dark photo). */
-function HeroGoal({ label, cur, goal, money: isMoney }: { label: string; cur: number; goal: number; money: boolean }) {
-  const pct = goal > 0 ? Math.min(100, Math.round((cur / goal) * 100)) : 0;
-  return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.06] px-3 py-2 backdrop-blur-md">
-      <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.06em] text-white/55">
-        <span className="truncate">{label}</span>
-        <span className="flex-none text-white/80">{pct}%</span>
-      </div>
-      <div className="mt-1 flex items-baseline gap-1 text-white">
-        <span className="font-display text-[15px] font-bold tnum">{isMoney ? kMoney(cur) : Math.round(cur)}</span>
-        <span className="text-[11px] text-white/45">/ {isMoney ? kMoney(goal) : goal}</span>
-      </div>
-      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/15">
-        <motion.div className="h-full rounded-full bg-gradient-to-r from-brand-300 to-brand-500"
-          initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.9, ease: "easeOut" }} />
-      </div>
-    </div>
-  );
-}
 
 type GoalItem = {
   key: string; label: string; icon: LucideIcon; cur: number; goal: number; money: boolean;
@@ -1125,33 +1143,6 @@ function DashEmpty({
   );
 }
 
-function HeroStat({
-  icon: Icon,
-  label,
-  value,
-  money: isMoney,
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: number;
-  money?: boolean;
-}) {
-  return (
-    <div className="glass flex items-center gap-3 rounded-xl px-3.5 py-2.5">
-      <span className="flex h-8 w-8 flex-none items-center justify-center rounded-lg bg-white/10 text-brand-200">
-        <Icon className="h-4 w-4" />
-      </span>
-      <div className="leading-tight">
-        <CountUp
-          value={value}
-          format={isMoney ? (n) => money(Math.round(n)) : undefined}
-          className="font-display text-[18px] font-bold tnum text-white"
-        />
-        <div className="text-[10.5px] font-medium uppercase tracking-[0.07em] text-white/55">{label}</div>
-      </div>
-    </div>
-  );
-}
 
 function HeroAction({
   to,
@@ -1298,10 +1289,10 @@ function NeedsAttention({
   };
 
   return (
-    <div className="mt-5">
-      <div className="mb-3 flex items-end justify-between gap-3">
+    <div className="mt-6">
+      <div className="mb-2.5 flex items-end justify-between gap-3">
         <div className="flex items-center gap-2">
-          <h2 className="font-display text-[15px] font-bold tracking-tight text-ink">Needs attention</h2>
+          <h2 className="font-display text-[14px] font-bold tracking-tight text-ink">Needs attention</h2>
           <span className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-ink/[0.06] px-1.5 text-[11px] font-semibold tabular-nums text-ink2">
             {items.length}
           </span>
@@ -1309,7 +1300,7 @@ function NeedsAttention({
         <span className="hidden text-[11.5px] text-ink3 sm:inline">Sorted by priority</span>
       </div>
 
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-1.5">
         {items.map((it, i) => {
           const isHigh = it.priority === "High";
           return (
@@ -1322,26 +1313,26 @@ function NeedsAttention({
               <Link
                 to={it.to}
                 aria-label={`${it.cta}: ${it.title}`}
-                className="group surface flex items-center gap-3 rounded-xl p-2.5 pr-2.5 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-px hover:border-brand-500/30 hover:shadow-lift active:translate-y-0 sm:pr-3"
+                className="group surface flex items-center gap-2.5 rounded-xl p-2 pr-2 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-px hover:border-brand-500/30 hover:shadow-lift active:translate-y-0 sm:pr-2.5"
               >
-                <span className={cn("flex h-10 w-10 flex-none items-center justify-center rounded-xl", ICON[it.tone])}>
-                  <it.icon className="h-[18px] w-[18px]" />
+                <span className={cn("flex h-9 w-9 flex-none items-center justify-center rounded-lg", ICON[it.tone])}>
+                  <it.icon className="h-4 w-4" />
                 </span>
 
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="truncate text-[13.5px] font-semibold tracking-tight text-ink">{it.title}</span>
+                    <span className="truncate text-[13px] font-semibold tracking-tight text-ink">{it.title}</span>
                     <span className="ml-auto flex flex-none items-center gap-1 pl-1 text-[10px] font-semibold uppercase tracking-wide text-ink3">
                       <span aria-hidden className={cn("h-1.5 w-1.5 rounded-full", DOT[it.priority])} />
                       {it.priority}
                     </span>
                   </div>
-                  <p className="mt-0.5 truncate text-[12px] leading-relaxed text-ink3">{it.desc}</p>
+                  <p className="mt-0.5 truncate text-[11.5px] leading-snug text-ink3">{it.desc}</p>
                 </div>
 
                 <span
                   className={cn(
-                    "ml-1 inline-flex h-8 flex-none items-center gap-1.5 rounded-lg px-3 text-[12px] font-semibold transition-[background-color,color,border-color] duration-150",
+                    "ml-1 inline-flex h-[30px] flex-none items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-semibold transition-[background-color,color,border-color] duration-150",
                     isHigh
                       ? "bg-brand-500 text-white shadow-sm group-hover:bg-brand-600"
                       : "border border-line bg-panel2 text-ink2 group-hover:border-brand-500/40 group-hover:text-ink"
